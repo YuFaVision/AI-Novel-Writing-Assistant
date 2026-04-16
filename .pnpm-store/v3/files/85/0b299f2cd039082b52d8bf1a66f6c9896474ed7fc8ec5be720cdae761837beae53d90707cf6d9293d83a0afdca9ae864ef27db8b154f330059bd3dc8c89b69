@@ -1,0 +1,3 @@
+import type { SubscribableWithState } from "../../subscribable/index.js";
+export declare const tapSubscribable: <T>(subscribable: Omit<SubscribableWithState<T, any>, "path">) => T;
+//# sourceMappingURL=tap-subscribable.d.ts.map

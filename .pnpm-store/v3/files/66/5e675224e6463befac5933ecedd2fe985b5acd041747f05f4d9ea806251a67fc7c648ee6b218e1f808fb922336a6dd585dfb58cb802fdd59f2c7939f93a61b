@@ -1,0 +1,36 @@
+import type { Attachment, PendingAttachment, CompleteAttachment } from "../types/index.js";
+export type AttachmentAdapter = {
+    accept: string;
+    add(state: {
+        file: File;
+    }): Promise<PendingAttachment> | AsyncGenerator<PendingAttachment, void>;
+    remove(attachment: Attachment): Promise<void>;
+    send(attachment: PendingAttachment): Promise<CompleteAttachment>;
+};
+export declare class SimpleImageAttachmentAdapter implements AttachmentAdapter {
+    accept: string;
+    add(state: {
+        file: File;
+    }): Promise<PendingAttachment>;
+    send(attachment: PendingAttachment): Promise<CompleteAttachment>;
+    remove(): Promise<void>;
+}
+export declare class SimpleTextAttachmentAdapter implements AttachmentAdapter {
+    accept: string;
+    add(state: {
+        file: File;
+    }): Promise<PendingAttachment>;
+    send(attachment: PendingAttachment): Promise<CompleteAttachment>;
+    remove(): Promise<void>;
+}
+export declare class CompositeAttachmentAdapter implements AttachmentAdapter {
+    private _adapters;
+    accept: string;
+    constructor(adapters: AttachmentAdapter[]);
+    add(state: {
+        file: File;
+    }): Promise<PendingAttachment> | AsyncGenerator<PendingAttachment, void, any>;
+    send(attachment: PendingAttachment): Promise<CompleteAttachment>;
+    remove(attachment: Attachment): Promise<void>;
+}
+//# sourceMappingURL=attachment.d.ts.map

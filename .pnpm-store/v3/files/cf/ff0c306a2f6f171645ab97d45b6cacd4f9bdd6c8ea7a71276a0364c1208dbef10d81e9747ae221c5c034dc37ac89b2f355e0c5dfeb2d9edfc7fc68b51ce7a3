@@ -1,0 +1,4 @@
+export type { AttachmentAdapter } from "@assistant-ui/core";
+export { SimpleImageAttachmentAdapter, SimpleTextAttachmentAdapter, CompositeAttachmentAdapter, } from "@assistant-ui/core";
+export { CloudFileAttachmentAdapter } from "./CloudFileAttachmentAdapter.js";
+//# sourceMappingURL=index.d.ts.map

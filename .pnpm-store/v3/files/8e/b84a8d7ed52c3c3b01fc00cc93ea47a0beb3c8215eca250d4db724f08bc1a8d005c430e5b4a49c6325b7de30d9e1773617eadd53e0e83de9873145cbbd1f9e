@@ -1,0 +1,80 @@
+import { normalizeToolList } from "./toolNormalization.js";
+export const sanitizeForMessage = (value, seen = new WeakSet()) => {
+    // Early return for primitives
+    if (value === null || value === undefined)
+        return value;
+    if (typeof value === "string" ||
+        typeof value === "number" ||
+        typeof value === "boolean") {
+        return value;
+    }
+    if (typeof value === "function") {
+        return "[Function]";
+    }
+    if (value instanceof Date) {
+        return value.toISOString();
+    }
+    if (value instanceof Map) {
+        const result = {};
+        for (const [key, entry] of value.entries()) {
+            result[String(key)] = sanitizeForMessage(entry, seen);
+        }
+        return result;
+    }
+    if (value instanceof Set) {
+        return Array.from(value).map((entry) => sanitizeForMessage(entry, seen));
+    }
+    if (Array.isArray(value)) {
+        if (seen.has(value))
+            return "[Circular]";
+        seen.add(value);
+        return value
+            .map((entry) => sanitizeForMessage(entry, seen))
+            .filter((item) => item !== undefined);
+    }
+    if (typeof value === "object") {
+        if (seen.has(value))
+            return "[Circular]";
+        seen.add(value);
+        const result = {};
+        for (const [key, entry] of Object.entries(value)) {
+            result[key] = sanitizeForMessage(entry, seen);
+        }
+        return result;
+    }
+    return value;
+};
+export const serializeModelContext = (context) => {
+    if (!context || typeof context !== "object") {
+        return undefined;
+    }
+    const modelContext = context;
+    const result = {};
+    const systemValue = modelContext["system"];
+    if (typeof systemValue === "string" && systemValue.length > 0) {
+        result.system = systemValue;
+    }
+    const tools = normalizeToolList(modelContext["tools"]);
+    if (tools.length > 0) {
+        result.tools = tools.map((tool) => ({
+            ...tool,
+            parameters: sanitizeForMessage(tool.parameters),
+        }));
+    }
+    if (modelContext["callSettings"] !== undefined) {
+        const callSettings = sanitizeForMessage(modelContext["callSettings"]);
+        if (callSettings &&
+            typeof callSettings === "object" &&
+            !Array.isArray(callSettings)) {
+            result.callSettings = callSettings;
+        }
+    }
+    if (modelContext["config"] !== undefined) {
+        const config = sanitizeForMessage(modelContext["config"]);
+        if (config && typeof config === "object" && !Array.isArray(config)) {
+            result.config = config;
+        }
+    }
+    return Object.keys(result).length > 0 ? result : undefined;
+};
+//# sourceMappingURL=serialization.js.map

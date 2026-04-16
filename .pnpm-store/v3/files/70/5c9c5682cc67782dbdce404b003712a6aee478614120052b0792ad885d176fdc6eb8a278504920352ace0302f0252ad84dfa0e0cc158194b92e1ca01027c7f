@@ -1,0 +1,2 @@
+export type { FeedbackAdapter } from "@assistant-ui/core";
+//# sourceMappingURL=index.d.ts.map

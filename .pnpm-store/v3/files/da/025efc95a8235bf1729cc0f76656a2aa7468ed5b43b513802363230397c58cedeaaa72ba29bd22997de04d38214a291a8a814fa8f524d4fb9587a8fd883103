@@ -1,0 +1,10 @@
+import type { NormalizedTool } from "./utils/toolNormalization.js";
+export type TabType = "state" | "events" | "context";
+export type ViewMode = "raw" | "preview";
+export interface SerializedModelContext {
+    system?: string;
+    tools?: NormalizedTool[];
+    callSettings?: Record<string, unknown>;
+    config?: Record<string, unknown>;
+}
+//# sourceMappingURL=types.d.ts.map

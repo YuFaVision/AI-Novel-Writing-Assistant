@@ -1,0 +1,10 @@
+import { type ClientOutput } from "@assistant-ui/store";
+import { ThreadListRuntime, AssistantRuntime } from "../../runtime/index.js";
+export declare const ThreadListClient: (props: {
+    runtime: ThreadListRuntime;
+    __internal_assistantRuntime: AssistantRuntime;
+}) => import("@assistant-ui/tap").ResourceElement<ClientOutput<"threads">, {
+    runtime: ThreadListRuntime;
+    __internal_assistantRuntime: AssistantRuntime;
+}>;
+//# sourceMappingURL=thread-list-runtime-client.d.ts.map

@@ -1,0 +1,29 @@
+"use client";
+import { jsx as _jsx } from "react/jsx-runtime";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { FrameHost } from "./FrameHost.js";
+import { DEFAULT_FRAME_URL } from "./constants.js";
+export const DevToolsFrame = ({ frameUrl = DEFAULT_FRAME_URL, className, style, title = "assistant-ui DevTools", }) => {
+    const iframeRef = useRef(null);
+    const frameHostRef = useRef(null);
+    const resolvedFrameUrl = useMemo(() => frameUrl, [frameUrl]);
+    const handleFrameLoad = useCallback(() => {
+        if (frameHostRef.current) {
+            frameHostRef.current.destroy();
+            frameHostRef.current = null;
+        }
+        if (iframeRef.current) {
+            frameHostRef.current = new FrameHost(iframeRef.current);
+        }
+    }, []);
+    useEffect(() => {
+        return () => {
+            if (frameHostRef.current) {
+                frameHostRef.current.destroy();
+                frameHostRef.current = null;
+            }
+        };
+    }, []);
+    return (_jsx("iframe", { ref: iframeRef, src: resolvedFrameUrl, onLoad: handleFrameLoad, className: className, style: style, title: title }));
+};
+//# sourceMappingURL=DevToolsFrame.js.map

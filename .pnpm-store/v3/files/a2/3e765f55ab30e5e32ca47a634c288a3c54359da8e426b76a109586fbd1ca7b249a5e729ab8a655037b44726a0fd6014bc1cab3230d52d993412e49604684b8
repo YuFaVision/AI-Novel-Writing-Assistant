@@ -1,0 +1,7 @@
+// React-specific (stay in react)
+export { useLocalRuntime } from "./useLocalRuntime.js";
+/**
+ * @deprecated Use `useLocalRuntime` instead.
+ */
+export { useLocalRuntime as useLocalThreadRuntime } from "./useLocalRuntime.js";
+//# sourceMappingURL=index.js.map

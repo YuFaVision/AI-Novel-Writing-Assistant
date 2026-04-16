@@ -1,0 +1,28 @@
+import { type ComponentType, type FC } from "react";
+export declare namespace ThreadPrimitiveSuggestions {
+    type Props = {
+        /**
+         * Component to render for each suggestion.
+         */
+        components: {
+            /** Component used to render each suggestion */
+            Suggestion: ComponentType;
+        };
+    };
+}
+export declare namespace ThreadPrimitiveSuggestionByIndex {
+    type Props = {
+        index: number;
+        components: ThreadPrimitiveSuggestions.Props["components"];
+    };
+}
+/**
+ * Renders a single suggestion at the specified index.
+ */
+export declare const ThreadPrimitiveSuggestionByIndex: FC<ThreadPrimitiveSuggestionByIndex.Props>;
+/**
+ * Renders all suggestions using the provided component configuration.
+ */
+export declare const ThreadPrimitiveSuggestionsImpl: FC<ThreadPrimitiveSuggestions.Props>;
+export declare const ThreadPrimitiveSuggestions: import("react").NamedExoticComponent<ThreadPrimitiveSuggestions.Props>;
+//# sourceMappingURL=ThreadSuggestions.d.ts.map

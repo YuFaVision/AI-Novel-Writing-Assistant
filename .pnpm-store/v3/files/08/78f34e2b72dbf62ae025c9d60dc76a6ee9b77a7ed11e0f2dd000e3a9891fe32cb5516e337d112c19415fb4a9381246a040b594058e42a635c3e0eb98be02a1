@@ -1,0 +1,27 @@
+import { DevToolsHost } from "./DevToolsHost.js";
+export class FrameHost {
+    frame;
+    devToolsHost;
+    messageListener;
+    constructor(frame) {
+        this.frame = frame;
+        // Create DevToolsHost with callback to send messages to iframe
+        this.devToolsHost = new DevToolsHost((message) => {
+            if (this.frame.contentWindow) {
+                this.frame.contentWindow.postMessage(message, "*");
+            }
+        });
+        // Setup listener to forward messages from iframe to DevToolsHost
+        this.messageListener = (event) => {
+            if (event.source !== this.frame.contentWindow)
+                return;
+            this.devToolsHost.onReceiveMessage(event.data);
+        };
+        window.addEventListener("message", this.messageListener);
+    }
+    destroy() {
+        window.removeEventListener("message", this.messageListener);
+        this.devToolsHost.destroy();
+    }
+}
+//# sourceMappingURL=FrameHost.js.map

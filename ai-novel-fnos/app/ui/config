@@ -1,0 +1,10 @@
+{
+  "main": {
+    "title": "AI小说写作助手",
+    "icon": "images/icon-{0}.png",
+    "type": "iframe",
+    "protocol": "http",
+    "url": "index.html",
+    "allUsers": true
+  }
+}

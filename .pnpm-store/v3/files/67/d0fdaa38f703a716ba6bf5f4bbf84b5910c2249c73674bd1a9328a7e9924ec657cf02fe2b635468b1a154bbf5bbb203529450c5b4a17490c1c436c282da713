@@ -1,0 +1,8 @@
+export type { ChatModelAdapter, ChatModelRunOptions, ChatModelRunResult, ChatModelRunUpdate, LocalRuntimeOptionsBase, } from "@assistant-ui/core";
+export { useLocalRuntime } from "./useLocalRuntime.js";
+/**
+ * @deprecated Use `useLocalRuntime` instead.
+ */
+export { useLocalRuntime as useLocalThreadRuntime } from "./useLocalRuntime.js";
+export type { LocalRuntimeOptions } from "./LocalRuntimeOptions.js";
+//# sourceMappingURL=index.d.ts.map

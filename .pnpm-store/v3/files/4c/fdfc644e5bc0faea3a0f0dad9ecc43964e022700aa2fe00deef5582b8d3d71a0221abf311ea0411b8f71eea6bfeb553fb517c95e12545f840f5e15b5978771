@@ -1,0 +1,96 @@
+import * as platejs0 from "platejs";
+import { Descendant, History, OmitFirst, Path, PluginConfig, SlateEditor, TLocation } from "platejs";
+
+//#region src/lib/transforms/insertAINodes.d.ts
+declare const insertAINodes: (editor: SlateEditor, nodes: Descendant[], {
+  target
+}?: {
+  target?: Path;
+}) => void;
+//#endregion
+//#region src/lib/transforms/removeAIMarks.d.ts
+declare const removeAIMarks: (editor: SlateEditor, {
+  at
+}?: {
+  at?: TLocation;
+}) => void;
+//#endregion
+//#region src/lib/transforms/removeAINodes.d.ts
+declare const removeAINodes: (editor: SlateEditor, {
+  at
+}?: {
+  at?: Path;
+}) => void;
+//#endregion
+//#region src/lib/transforms/undoAI.d.ts
+declare const undoAI: (editor: SlateEditor) => void;
+//#endregion
+//#region src/lib/transforms/withAIBatch.d.ts
+type AIBatch = History['undos'][number] & {
+  ai?: boolean;
+};
+declare const withAIBatch: (editor: SlateEditor, fn: () => void, {
+  split
+}?: {
+  split?: boolean;
+}) => void;
+//#endregion
+//#region src/lib/BaseAIPlugin.d.ts
+type BaseAIPluginConfig = PluginConfig<'ai', {}, {}, {
+  ai: {
+    insertNodes: OmitFirst<typeof insertAINodes>;
+    removeMarks: OmitFirst<typeof removeAIMarks>;
+    removeNodes: OmitFirst<typeof removeAINodes>;
+  };
+}>;
+declare const BaseAIPlugin: platejs0.SlatePlugin<PluginConfig<any, {}, {}, Record<any, {
+  insertNodes: (nodes: platejs0.Descendant[], args_1?: {
+    target?: platejs0.Path;
+  } | undefined) => void;
+  removeMarks: (args_0?: {
+    at?: platejs0.TLocation;
+  } | undefined) => void;
+  removeNodes: (args_0?: {
+    at?: platejs0.Path;
+  } | undefined) => void;
+  undo: () => void;
+}>, {}>>;
+//#endregion
+//#region src/lib/types.d.ts
+type AIToolName = 'comment' | 'edit' | 'generate' | null;
+type AIMode = 'chat' | 'insert';
+//#endregion
+//#region src/lib/utils/getEditorPrompt.d.ts
+type EditorPrompt = ((params: EditorPromptParams) => string) | PromptConfig | string;
+type EditorPromptParams = {
+  editor: SlateEditor;
+  isBlockSelecting: boolean;
+  isSelecting: boolean;
+};
+type PromptConfig = {
+  default: string;
+  blockSelecting?: string;
+  selecting?: string;
+};
+declare const getEditorPrompt: (editor: SlateEditor, {
+  prompt
+}: {
+  prompt?: EditorPrompt;
+}) => string;
+//#endregion
+//#region src/lib/utils/replacePlaceholders.d.ts
+type MarkdownType = 'block' | 'blockSelection' | 'blockSelectionWithBlockId' | 'blockWithBlockId' | 'editor' | 'editorWithBlockId' | 'tableCellWithId';
+declare const replacePlaceholders: (editor: SlateEditor, text: string, {
+  prompt
+}?: {
+  prompt?: string;
+}) => string;
+//#endregion
+//#region src/lib/utils/getMarkdown.d.ts
+declare const getMarkdown: (editor: SlateEditor, {
+  type
+}: {
+  type: MarkdownType;
+}) => string;
+//#endregion
+export { insertAINodes as _, EditorPromptParams as a, AIMode as c, BaseAIPluginConfig as d, AIBatch as f, removeAIMarks as g, removeAINodes as h, EditorPrompt as i, AIToolName as l, undoAI as m, MarkdownType as n, PromptConfig as o, withAIBatch as p, replacePlaceholders as r, getEditorPrompt as s, getMarkdown as t, BaseAIPlugin as u };

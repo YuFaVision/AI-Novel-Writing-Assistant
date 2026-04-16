@@ -1,0 +1,4 @@
+import { useExternalMessageConverter } from "@assistant-ui/react";
+import { LangChainMessage } from "./types.js";
+export declare const convertLangChainMessages: useExternalMessageConverter.Callback<LangChainMessage>;
+//# sourceMappingURL=convertLangChainMessages.d.ts.map

@@ -1,0 +1,11 @@
+"use client";
+// Re-export shared from core/react
+export { makeAssistantTool, makeAssistantToolUI, makeAssistantDataUI, useAssistantTool, useAssistantToolUI, useAssistantDataUI, useAssistantInstructions, useInlineRender, Tools, DataRenderers, } from "@assistant-ui/core/react";
+export { mergeModelContexts } from "@assistant-ui/core";
+export { tool } from "@assistant-ui/core";
+export { Suggestions } from "@assistant-ui/core/store";
+// React-only (stays)
+export { makeAssistantVisible } from "./makeAssistantVisible.js";
+export * from "./registry/index.js";
+export * from "./frame/index.js";
+//# sourceMappingURL=index.js.map

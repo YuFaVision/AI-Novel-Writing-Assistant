@@ -1,0 +1,10 @@
+import { LangChainMessage, LangChainMessageChunk } from "./types.js";
+export type NormalizedLangGraphTupleMessage = {
+    kind: "chunk";
+    message: LangChainMessageChunk;
+} | {
+    kind: "message";
+    message: LangChainMessage;
+};
+export declare const normalizeLangGraphTupleMessage: (value: unknown) => NormalizedLangGraphTupleMessage | null;
+//# sourceMappingURL=normalizeLangGraphTupleMessage.d.ts.map

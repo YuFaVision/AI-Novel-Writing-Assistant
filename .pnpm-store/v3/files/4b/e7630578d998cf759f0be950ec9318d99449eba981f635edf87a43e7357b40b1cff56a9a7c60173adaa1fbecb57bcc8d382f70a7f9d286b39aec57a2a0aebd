@@ -1,0 +1,28 @@
+import type { AppendMessage, ThreadMessage } from "../../types/index.js";
+import type { AttachmentAdapter } from "../../adapters/attachment.js";
+import type { DictationAdapter } from "../../adapters/speech.js";
+import type { ThreadRuntimeCore } from "../interfaces/thread-runtime-core.js";
+import { BaseComposerRuntimeCore } from "./base-composer-runtime-core.js";
+export declare class DefaultEditComposerRuntimeCore extends BaseComposerRuntimeCore {
+    private runtime;
+    private endEditCallback;
+    get canCancel(): boolean;
+    protected getAttachmentAdapter(): AttachmentAdapter | undefined;
+    protected getDictationAdapter(): DictationAdapter | undefined;
+    private _nonTextParts;
+    private _previousText;
+    private _parentId;
+    private _sourceId;
+    constructor(runtime: ThreadRuntimeCore & {
+        adapters?: {
+            attachments?: AttachmentAdapter | undefined;
+            dictation?: DictationAdapter | undefined;
+        } | undefined;
+    }, endEditCallback: () => void, { parentId, message }: {
+        parentId: string | null;
+        message: ThreadMessage;
+    });
+    handleSend(message: Omit<AppendMessage, "parentId" | "sourceId">): Promise<void>;
+    handleCancel(): void;
+}
+//# sourceMappingURL=default-edit-composer-runtime-core.d.ts.map

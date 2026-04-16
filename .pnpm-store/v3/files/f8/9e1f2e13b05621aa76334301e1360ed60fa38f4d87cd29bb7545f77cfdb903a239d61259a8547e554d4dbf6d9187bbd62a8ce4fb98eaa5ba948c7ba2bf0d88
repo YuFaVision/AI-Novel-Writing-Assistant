@@ -1,0 +1,8 @@
+export declare class FrameHost {
+    private frame;
+    private devToolsHost;
+    private messageListener;
+    constructor(frame: HTMLIFrameElement);
+    destroy(): void;
+}
+//# sourceMappingURL=FrameHost.d.ts.map

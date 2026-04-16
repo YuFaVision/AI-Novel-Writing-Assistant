@@ -1,0 +1,1 @@
+{"version":3,"file":"DevToolsFrame.d.ts","sourceRoot":"","sources":["../src/DevToolsFrame.tsx"],"names":[],"mappings":"AAMA,MAAM,WAAW,kBAAkB;IACjC,QAAQ,CAAC,EAAE,MAAM,CAAC;IAClB,SAAS,CAAC,EAAE,MAAM,CAAC;IACnB,KAAK,CAAC,EAAE,KAAK,CAAC,aAAa,CAAC;IAC5B,KAAK,CAAC,EAAE,MAAM,CAAC;CAChB;AAED,eAAO,MAAM,aAAa,EAAE,KAAK,CAAC,EAAE,CAAC,kBAAkB,CAyCtD,CAAC"}

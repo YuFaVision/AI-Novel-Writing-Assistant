@@ -1,0 +1,13 @@
+{
+  "appname": "ai-novel-writing-assistant",
+  "version": "1.0.0",
+  "display_name": "AI小说写作助手",
+  "desc": "一个强大的AI小说写作助手，帮助作家生成创意内容、构建故事情节和角色",
+  "platform": "x86",
+  "source": "thirdparty",
+  "maintainer": "AI Novel Team",
+  "maintainer_url": "https://github.com/ExplosiveCoderflome/AI-Novel-Writing-Assistant",
+  "os_min_version": "0.9.27",
+  "desktop_uidir": "ui",
+  "desktop_applaunchname": "main"
+}

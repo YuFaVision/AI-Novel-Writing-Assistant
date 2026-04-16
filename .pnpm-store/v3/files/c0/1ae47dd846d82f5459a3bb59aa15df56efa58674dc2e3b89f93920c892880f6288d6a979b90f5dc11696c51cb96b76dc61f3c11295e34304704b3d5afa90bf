@@ -1,0 +1,9 @@
+export { mergeModelContexts } from "./types.js";
+export { tool } from "./tool.js";
+export { ModelContextRegistry } from "./registry.js";
+export { 
+// Classes
+AssistantFrameHost, AssistantFrameProvider, 
+// Constants
+FRAME_MESSAGE_CHANNEL, } from "./frame/index.js";
+//# sourceMappingURL=index.js.map

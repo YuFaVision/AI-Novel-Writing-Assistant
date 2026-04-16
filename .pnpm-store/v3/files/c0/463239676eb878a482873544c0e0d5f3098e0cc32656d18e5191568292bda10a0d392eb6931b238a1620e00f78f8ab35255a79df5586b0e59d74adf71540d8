@@ -1,0 +1,5 @@
+import { ModelContext } from "@assistant-ui/react";
+import type { SerializedModelContext } from "../types.js";
+export declare const sanitizeForMessage: (value: unknown, seen?: WeakSet<object>) => unknown;
+export declare const serializeModelContext: (context: ModelContext | undefined) => SerializedModelContext | undefined;
+//# sourceMappingURL=serialization.d.ts.map

@@ -1,0 +1,22 @@
+#!/bin/bash
+
+case "$1" in
+    start)
+        # 静态应用不需要启动服务
+        echo "AI Novel Writing Assistant started"
+        exit 0
+        ;;
+    stop)
+        # 静态应用不需要停止服务
+        echo "AI Novel Writing Assistant stopped"
+        exit 0
+        ;;
+    status)
+        # 静态应用始终运行
+        exit 0
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|status}"
+        exit 1
+        ;;
+esac

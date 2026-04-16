@@ -1,0 +1,2 @@
+export declare const DevToolsModal: () => import("react/jsx-runtime").JSX.Element | null;
+//# sourceMappingURL=DevToolsModal.d.ts.map

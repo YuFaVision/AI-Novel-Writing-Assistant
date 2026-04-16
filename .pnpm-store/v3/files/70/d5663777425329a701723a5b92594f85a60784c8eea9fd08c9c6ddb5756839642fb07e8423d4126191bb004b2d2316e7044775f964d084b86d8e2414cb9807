@@ -1,0 +1,4 @@
+export { AssistantFrameHost } from "./host.js";
+export { AssistantFrameProvider } from "./provider.js";
+export { FRAME_MESSAGE_CHANNEL } from "./types.js";
+//# sourceMappingURL=index.js.map

@@ -1,0 +1,1403 @@
+import { n as BaseAIPlugin, r as withAIBatch, t as getEditorPrompt } from "../getEditorPrompt-BnVrgUl3.js";
+import { ElementApi, KEYS, NodeApi, PathApi, RangeApi, TextApi, bindFirst, getPluginKey, getPluginType, isDefined, nanoid } from "platejs";
+import { SkipSuggestionDeletes, acceptSuggestion, diffToSuggestions, getSuggestionKey, getTransientSuggestionKey, rejectSuggestion } from "@platejs/suggestion";
+import { isSelecting } from "@platejs/selection";
+import { MarkdownPlugin, deserializeInlineMd, deserializeMd, serializeInlineMd, serializeMd } from "@platejs/markdown";
+import cloneDeep from "lodash/cloneDeep.js";
+import { createTPlatePlugin, getEditorPlugin as getEditorPlugin$1, toPlatePlugin, useEditorPlugin, usePluginOption } from "platejs/react";
+import { distance } from "fastest-levenshtein";
+import { BlockSelectionPlugin, removeBlockSelectionNodes } from "@platejs/selection/react";
+import { SuggestionPlugin } from "@platejs/suggestion/react";
+import { c } from "react-compiler-runtime";
+import React, { useEffect, useMemo, useRef } from "react";
+import debounce from "lodash/debounce.js";
+
+//#region src/react/ai/AIPlugin.ts
+const AIPlugin = toPlatePlugin(BaseAIPlugin);
+
+//#endregion
+//#region src/react/ai/utils/findTextRangeInBlock.tsx
+function maxAllowedDistance(len) {
+	if (len <= 2) return 0;
+	if (len <= 5) return 1;
+	if (len <= 10) return 2;
+	if (len <= 20) return 3;
+	return 5;
+}
+/** Find text within a block, supporting fuzzy matching. */
+function findTextRangeInBlock({ block, findText }) {
+	const [blockNode, blockPath] = block;
+	const textSegments = [];
+	let fullText = "";
+	for (const [textNode, textPath] of NodeApi.texts(blockNode)) {
+		const startOffset = fullText.length;
+		const absolutePath = [...blockPath, ...textPath];
+		textSegments.push({
+			offset: startOffset,
+			path: absolutePath,
+			text: textNode.text
+		});
+		fullText += textNode.text;
+	}
+	if (!fullText) return null;
+	let matchStart = fullText.indexOf(findText);
+	let matchEnd = matchStart >= 0 ? matchStart + findText.length : -1;
+	if (matchStart === -1) {
+		const maxDist = maxAllowedDistance(findText.length);
+		let bestMatch = {
+			distance: Number.POSITIVE_INFINITY,
+			end: -1,
+			start: -1
+		};
+		for (let i = 0; i <= fullText.length - findText.length; i++) for (let lenOffset = -maxDist; lenOffset <= maxDist; lenOffset++) {
+			const len = findText.length + lenOffset;
+			if (len <= 0 || i + len > fullText.length) continue;
+			const dist = distance(fullText.slice(i, i + len), findText);
+			if (dist <= maxDist && dist < bestMatch.distance) bestMatch = {
+				distance: dist,
+				end: i + len,
+				start: i
+			};
+		}
+		if (bestMatch.start !== -1) {
+			matchStart = bestMatch.start;
+			matchEnd = bestMatch.end;
+		}
+	}
+	if (matchStart === -1) for (let prefixLen = findText.length - 1; prefixLen > 0; prefixLen--) {
+		const prefix = findText.slice(0, Math.max(0, prefixLen));
+		const idx = fullText.indexOf(prefix);
+		if (idx !== -1) {
+			matchStart = idx;
+			matchEnd = idx + prefixLen;
+			break;
+		}
+	}
+	if (matchStart === -1) return null;
+	const findPoint = (charOffset, isEnd = false) => {
+		if (!isEnd) {
+			for (const segment of textSegments) if (charOffset === segment.offset) return {
+				offset: 0,
+				path: segment.path
+			};
+		}
+		for (const segment of textSegments) {
+			const segmentEnd = segment.offset + segment.text.length;
+			if (charOffset >= segment.offset && charOffset <= segmentEnd) return {
+				offset: charOffset - segment.offset,
+				path: segment.path
+			};
+		}
+		const lastSegment = textSegments.at(-1);
+		if (!lastSegment) return {
+			offset: 0,
+			path: blockPath
+		};
+		return {
+			offset: lastSegment.text.length,
+			path: lastSegment.path
+		};
+	};
+	return {
+		anchor: findPoint(matchStart, false),
+		focus: findPoint(matchEnd, true)
+	};
+}
+
+//#endregion
+//#region src/react/ai/utils/aiCommentToRange.ts
+const aiCommentToRange = (editor, aiComment) => {
+	const { blockId, content } = aiComment;
+	const contentNodes = deserializeMd(editor, content);
+	let firstBlock;
+	const ranges = [];
+	contentNodes.forEach((node, index) => {
+		let currentBlock;
+		if (index === 0) {
+			firstBlock = editor.api.node({
+				id: blockId,
+				at: []
+			});
+			currentBlock = firstBlock;
+		} else {
+			if (!firstBlock) return;
+			const [_, firstBlockPath] = firstBlock;
+			const blockPath = [firstBlockPath[0] + index];
+			currentBlock = editor.api.node(blockPath);
+		}
+		if (!currentBlock) return;
+		const range = findTextRangeInBlock({
+			block: currentBlock,
+			findText: NodeApi.string(node)
+		});
+		if (!range) return;
+		ranges.push(range);
+	});
+	if (ranges.length === 0) return;
+	if (ranges.length > 1) {
+		const startRange = ranges[0];
+		const endRange = ranges.at(-1);
+		return {
+			anchor: startRange.anchor,
+			focus: endRange.focus
+		};
+	}
+	if (ranges.length === 1) return ranges[0];
+};
+
+//#endregion
+//#region src/react/ai-chat/utils/acceptAISuggestions.ts
+const acceptAISuggestions = (editor) => {
+	editor.getApi(SuggestionPlugin).suggestion.nodes({ transient: true }).forEach(([suggestionNode]) => {
+		const suggestionData = editor.getApi(SuggestionPlugin).suggestion.suggestionData(suggestionNode);
+		if (!suggestionData) return;
+		acceptSuggestion(editor, {
+			createdAt: new Date(suggestionData.createdAt),
+			keyId: getSuggestionKey(suggestionData.id),
+			suggestionId: suggestionData.id,
+			type: suggestionData.type,
+			userId: suggestionData.userId
+		});
+	});
+	editor.tf.unsetNodes([getTransientSuggestionKey()], {
+		at: [],
+		mode: "all",
+		match: (n) => !!n[getTransientSuggestionKey()]
+	});
+};
+
+//#endregion
+//#region src/react/ai-chat/transforms/acceptAIChat.ts
+const acceptAIChat = (editor) => {
+	const mode = editor.getOption(AIChatPlugin, "mode");
+	if (mode === "insert") {
+		const { tf } = getEditorPlugin$1(editor, AIPlugin);
+		const api = editor.getApi({ key: KEYS.ai });
+		const lastAINodePath = api.aiChat.node({
+			at: [],
+			reverse: true
+		})[1];
+		withAIBatch(editor, () => {
+			tf.ai.removeMarks();
+			editor.getTransforms(AIChatPlugin).aiChat.removeAnchor();
+		});
+		api.aiChat.hide();
+		editor.tf.focus();
+		const focusPoint = editor.api.end(lastAINodePath);
+		editor.tf.setSelection({
+			anchor: focusPoint,
+			focus: focusPoint
+		});
+	}
+	if (mode === "chat") {
+		withAIBatch(editor, () => {
+			acceptAISuggestions(editor);
+		});
+		editor.getApi(AIChatPlugin).aiChat.hide();
+	}
+};
+
+//#endregion
+//#region src/react/ai-chat/utils/nestedContainerUtils.ts
+/** Check if nodes is a single table with single cell */
+const isSingleCellTable = (nodes) => {
+	if (nodes.length !== 1) return false;
+	const table = nodes[0];
+	if (table.type !== KEYS.table) return false;
+	const rows = table.children;
+	if (rows.length !== 1) return false;
+	const row = rows[0];
+	if (row.type !== KEYS.tr) return false;
+	const cells = row.children;
+	if (cells.length !== 1) return false;
+	return cells[0].type === KEYS.td;
+};
+/** Extract td children from single-cell table */
+const getTableCellChildren = (table) => {
+	return table.children[0].children[0].children;
+};
+
+//#endregion
+//#region src/react/ai-chat/utils/applyAISuggestions.ts
+const applyAISuggestions = (editor, content) => {
+	/** Conflict with block selection */
+	editor.getApi({ key: KEYS.cursorOverlay })?.cursorOverlay?.removeCursor("selection");
+	const { chatNodes } = editor.getOptions(AIChatPlugin);
+	if (chatNodes.length > 1) {
+		const setReplaceIds = (ids) => {
+			editor.setOption(AIChatPlugin, "_replaceIds", ids);
+		};
+		if (editor.getOption(AIChatPlugin, "_replaceIds").length === 0) setReplaceIds(chatNodes.map((node) => node.id));
+		const diffNodes = getDiffNodes(editor, content);
+		const replaceNodes = Array.from(editor.api.nodes({
+			at: [],
+			match: (n) => ElementApi.isElement(n) && editor.getOption(AIChatPlugin, "_replaceIds").includes(n.id)
+		}));
+		replaceNodes.forEach(([node, path], index) => {
+			const replaceNode = node;
+			const diffNode = diffNodes[index];
+			const isSameString = SkipSuggestionDeletes(editor, replaceNode) === SkipSuggestionDeletes(editor, diffNode);
+			const isSameSuggestion = replaceNode.suggestion?.type === diffNode.suggestion?.type;
+			if (index === replaceNodes.length - 1 && diffNodes.length > replaceNodes.length) editor.tf.replaceNodes(diffNodes.slice(index), { at: path });
+			if (isSameString && isSameSuggestion && node.id === diffNode.id) return;
+			editor.tf.replaceNodes(diffNode, { at: path });
+		});
+		editor.getApi(BlockSelectionPlugin).blockSelection.set(diffNodes.map((node) => node.id));
+		setReplaceIds(diffNodes.map((node) => node.id));
+	} else {
+		const diffNodes = getDiffNodes(editor, content);
+		editor.tf.insertFragment(diffNodes);
+		const nodes = Array.from(editor.api.nodes({
+			at: [],
+			mode: "lowest",
+			match: (n) => TextApi.isText(n) && !!n[getTransientSuggestionKey()]
+		}));
+		const range = editor.api.nodesRange(nodes);
+		editor.tf.setSelection(range);
+		return;
+	}
+};
+const withProps = (diffNodes, chatNodes) => diffNodes.map((node, index) => {
+	if (!ElementApi.isElement(node)) return node;
+	const originalNode = chatNodes?.[index];
+	return {
+		...node,
+		...originalNode ?? { id: nanoid() },
+		children: node.children
+	};
+});
+const withTransient = (diffNodes) => diffNodes.map((node) => {
+	if (TextApi.isText(node)) return {
+		...node,
+		[getTransientSuggestionKey()]: true
+	};
+	return {
+		...node,
+		children: withTransient(node.children),
+		[getTransientSuggestionKey()]: true
+	};
+});
+const withoutSuggestionAndComments = (nodes) => nodes.map((node) => {
+	if (TextApi.isText(node)) {
+		if (node[KEYS.suggestion] || node[KEYS.comment]) return { text: node.text };
+		return node;
+	}
+	if (ElementApi.isElement(node)) {
+		if (node[KEYS.suggestion]) {
+			const nodeWithoutSuggestion = {};
+			Object.keys(node).forEach((key) => {
+				if (key !== KEYS.suggestion && !key.startsWith(KEYS.suggestion)) nodeWithoutSuggestion[key] = node[key];
+			});
+			return {
+				...nodeWithoutSuggestion,
+				children: withoutSuggestionAndComments(node.children)
+			};
+		}
+		return {
+			...node,
+			children: withoutSuggestionAndComments(node.children)
+		};
+	}
+	return node;
+});
+const getDiffNodes = (editor, aiContent) => {
+	let chatNodes = withoutSuggestionAndComments(editor.getOption(AIChatPlugin, "chatNodes"));
+	/**If selecting one single cell table, we just need to compare it's children to get diff nodes */
+	if (isSingleCellTable(chatNodes)) chatNodes = getTableCellChildren(chatNodes[0]);
+	const aiNodes = withProps(deserializeMd(editor, aiContent), chatNodes);
+	return withTransient(diffToSuggestions(editor, chatNodes, aiNodes, { ignoreProps: ["id", "listStart"] }));
+};
+
+//#endregion
+//#region src/react/ai-chat/utils/applyTableCellSuggestion.ts
+/**
+* Apply AI-generated content to a table cell as diff suggestions. Finds the
+* cell by ID, deserializes the markdown content, computes diff, and replaces
+* the cell's children with suggestion-marked nodes.
+*/
+const applyTableCellSuggestion = (editor, cellUpdate) => {
+	const { content, id } = cellUpdate;
+	const cellEntry = editor.api.node({
+		at: [],
+		match: (n) => ElementApi.isElement(n) && n.id === id
+	});
+	if (!cellEntry) {
+		console.warn(`Table cell with id "${id}" not found`);
+		return;
+	}
+	const [cell, cellPath] = cellEntry;
+	const transientDiffNodes = withTransient(diffToSuggestions(editor, withoutSuggestionAndComments(cell.children), deserializeMd(editor, content), { ignoreProps: ["id"] }));
+	editor.tf.replaceNodes(transientDiffNodes, {
+		at: cellPath,
+		children: true
+	});
+};
+
+//#endregion
+//#region src/react/ai-chat/utils/getLastAssistantMessage.ts
+function getLastAssistantMessage(editor) {
+	return editor.getOptions(AIChatPlugin).chat.messages?.findLast((message) => message.role === "assistant");
+}
+function useLastAssistantMessage() {
+	const $ = c(2);
+	const toolName = usePluginOption(AIChatPlugin, "toolName");
+	const chat = usePluginOption(AIChatPlugin, "chat");
+	if (toolName === "comment") return;
+	let t0;
+	if ($[0] !== chat.messages) {
+		t0 = chat.messages?.findLast(_temp);
+		$[0] = chat.messages;
+		$[1] = t0;
+	} else t0 = $[1];
+	return t0;
+}
+function _temp(message) {
+	return message.role === "assistant";
+}
+
+//#endregion
+//#region src/react/ai-chat/utils/rejectAISuggestions.ts
+const rejectAISuggestions = (editor) => {
+	editor.getApi(SuggestionPlugin).suggestion.nodes({ transient: true }).forEach(([suggestionNode]) => {
+		const suggestionData = editor.getApi(SuggestionPlugin).suggestion.suggestionData(suggestionNode);
+		if (!suggestionData) return;
+		rejectSuggestion(editor, {
+			createdAt: new Date(suggestionData.createdAt),
+			keyId: getSuggestionKey(suggestionData.id),
+			suggestionId: suggestionData.id,
+			type: suggestionData.type,
+			userId: suggestionData.userId
+		});
+	});
+	editor.tf.unsetNodes([getTransientSuggestionKey()], {
+		at: [],
+		mode: "all",
+		match: (n) => !!n[getTransientSuggestionKey()]
+	});
+};
+
+//#endregion
+//#region src/react/ai-chat/utils/resetAIChat.ts
+const resetAIChat = (editor, { undo = true } = {}) => {
+	const { api, getOptions, setOptions } = getEditorPlugin$1(editor, { key: KEYS.aiChat });
+	api.aiChat.stop();
+	const chat = getOptions().chat;
+	if (chat.messages && chat.messages.length > 0) chat.setMessages?.([]);
+	setOptions({
+		_replaceIds: [],
+		chatNodes: [],
+		mode: "insert",
+		toolName: null
+	});
+	if (undo) editor.getTransforms(AIPlugin).ai.undo();
+};
+
+//#endregion
+//#region src/react/ai-chat/utils/submitAIChat.ts
+const submitAIChat = (editor, input, { mode, options, prompt, toolName: toolNameProps } = {}) => {
+	const { getOptions, setOption } = getEditorPlugin$1(editor, { key: KEYS.aiChat });
+	const { chat, toolName: toolNameOption } = getOptions();
+	const toolName = toolNameProps ?? toolNameOption ?? null;
+	if (!prompt && input?.length === 0) return;
+	if (!prompt) prompt = input;
+	if (!mode) mode = isSelecting(editor) ? "chat" : "insert";
+	if (mode === "insert") editor.getTransforms(AIPlugin).ai.undo();
+	setOption("mode", mode);
+	setOption("toolName", toolName);
+	const blocks = editor.getApi(BlockSelectionPlugin).blockSelection.getNodes();
+	const blocksRange = editor.api.nodesRange(blocks);
+	const promptText = getEditorPrompt(editor, { prompt });
+	const selection = blocks.length > 0 ? blocksRange : editor.selection;
+	let chatNodes;
+	if (blocks.length > 0) chatNodes = blocks.map((block) => block[0]);
+	else {
+		const selectionBlocks = editor.api.blocks({ mode: "highest" });
+		if (selectionBlocks.length > 1) chatNodes = selectionBlocks.map((block) => block[0]);
+		else chatNodes = editor.api.fragment();
+	}
+	setOption("chatNodes", chatNodes);
+	setOption("chatSelection", blocks.length > 0 ? null : editor.selection);
+	const ctx = {
+		children: editor.children,
+		selection: selection ?? null,
+		toolName
+	};
+	chat.sendMessage?.({ text: promptText }, {
+		body: { ctx },
+		...options
+	});
+};
+
+//#endregion
+//#region src/react/ai-chat/transforms/replaceSelectionAIChat.ts
+const createFormattedBlocks = ({ blocks, format, sourceBlock }) => {
+	if (format === "none") return cloneDeep(blocks);
+	const [sourceNode] = sourceBlock;
+	const firstTextEntry = NodeApi.firstText(sourceNode);
+	if (!firstTextEntry) return null;
+	const blockProps = NodeApi.extractProps(sourceNode);
+	const textProps = NodeApi.extractProps(firstTextEntry[0]);
+	const applyTextFormatting = (node) => {
+		if (TextApi.isText(node)) return {
+			...textProps,
+			...node
+		};
+		if (node.children) return {
+			...node,
+			children: node.children.map(applyTextFormatting)
+		};
+		return node;
+	};
+	return blocks.map((block, index) => {
+		if (format === "single" && index > 0) return block;
+		return applyTextFormatting({
+			...block,
+			...blockProps
+		});
+	});
+};
+const replaceSelectionAIChat = (editor, sourceEditor, { format = "single" } = {}) => {
+	if (!sourceEditor || sourceEditor.api.isEmpty()) return;
+	const isBlockSelecting = editor.getOption(BlockSelectionPlugin, "isSelectingSome");
+	editor.getApi({ key: KEYS.ai }).aiChat.hide();
+	if (!isBlockSelecting) {
+		const firstBlock = editor.api.node({
+			block: true,
+			mode: "lowest"
+		});
+		if (firstBlock && editor.api.isSelected(firstBlock[1], { contains: true }) && format !== "none") {
+			const formattedBlocks$1 = createFormattedBlocks({
+				blocks: cloneDeep(sourceEditor.children),
+				format,
+				sourceBlock: firstBlock
+			});
+			if (!formattedBlocks$1) return;
+			/** When user selection is cover the whole code block */
+			if (firstBlock[0].type === KEYS.codeLine && sourceEditor.children[0].type === KEYS.codeBlock && sourceEditor.children.length === 1) editor.tf.insertFragment(formattedBlocks$1[0].children);
+			else editor.tf.insertFragment(formattedBlocks$1);
+			editor.tf.focus();
+			return;
+		}
+		editor.tf.insertFragment(sourceEditor.children);
+		editor.tf.focus();
+		return;
+	}
+	const selectedBlocks = editor.getApi(BlockSelectionPlugin).blockSelection.getNodes();
+	if (selectedBlocks.length === 0) return;
+	if (format === "none" || format === "single" && selectedBlocks.length > 1) {
+		editor.tf.withoutNormalizing(() => {
+			removeBlockSelectionNodes(editor);
+			editor.tf.withNewBatch(() => {
+				editor.getTransforms(BlockSelectionPlugin).blockSelection.insertBlocksAndSelect(cloneDeep(sourceEditor.children), { at: selectedBlocks[0][1] });
+			});
+		});
+		editor.getApi(BlockSelectionPlugin).blockSelection.focus();
+		return;
+	}
+	const [, firstBlockPath] = selectedBlocks[0];
+	const formattedBlocks = createFormattedBlocks({
+		blocks: cloneDeep(sourceEditor.children),
+		format,
+		sourceBlock: selectedBlocks[0]
+	});
+	if (!formattedBlocks) return;
+	editor.tf.withoutNormalizing(() => {
+		removeBlockSelectionNodes(editor);
+		editor.tf.withNewBatch(() => {
+			editor.getTransforms(BlockSelectionPlugin).blockSelection.insertBlocksAndSelect(formattedBlocks, { at: firstBlockPath });
+		});
+	});
+	editor.getApi(BlockSelectionPlugin).blockSelection.focus();
+};
+
+//#endregion
+//#region src/react/ai-chat/transforms/insertBelowAIChat.ts
+const insertBelowAIChat = (editor, sourceEditor, { format = "single" } = {}) => {
+	const { toolName } = editor.getOptions(AIChatPlugin);
+	if (toolName === "generate") return insertBelowGenerate(editor, sourceEditor, { format });
+	const selectedBlocks = editor.getApi(BlockSelectionPlugin).blockSelection.getNodes();
+	const selectedIds = editor.getOptions(BlockSelectionPlugin).selectedIds;
+	editor.getTransforms(AIPlugin).ai.undo();
+	const insertBlocksAndSelect = editor.getTransforms(BlockSelectionPlugin).blockSelection.insertBlocksAndSelect;
+	if (!selectedIds || selectedIds.size === 0) return;
+	const lastBlock = selectedBlocks.at(-1);
+	if (!lastBlock) return;
+	const nextPath = PathApi.next(lastBlock[1]);
+	insertBlocksAndSelect(selectedBlocks.map((block) => block[0]), {
+		at: nextPath,
+		insertedCallback: () => {
+			withAIBatch(editor, () => {
+				acceptAISuggestions(editor);
+			});
+		}
+	});
+	editor.getApi(AIChatPlugin).aiChat.hide({ focus: false });
+};
+const insertBelowGenerate = (editor, sourceEditor, { format = "single" } = {}) => {
+	if (!sourceEditor || sourceEditor.api.isEmpty()) return;
+	const isBlockSelecting = editor.getOption(BlockSelectionPlugin, "isSelectingSome");
+	editor.getApi({ key: KEYS.ai }).aiChat.hide();
+	const insertBlocksAndSelect = editor.getTransforms(BlockSelectionPlugin).blockSelection.insertBlocksAndSelect;
+	if (isBlockSelecting) {
+		const selectedBlocks = editor.getApi(BlockSelectionPlugin).blockSelection.getNodes();
+		const selectedIds = editor.getOptions(BlockSelectionPlugin).selectedIds;
+		if (!selectedIds || selectedIds.size === 0) return;
+		const lastBlock = selectedBlocks.at(-1);
+		if (!lastBlock) return;
+		const nextPath = PathApi.next(lastBlock[1]);
+		if (format === "none") {
+			insertBlocksAndSelect(cloneDeep(sourceEditor.children), { at: nextPath });
+			return;
+		}
+		const formattedBlocks = createFormattedBlocks({
+			blocks: cloneDeep(sourceEditor.children),
+			format,
+			sourceBlock: lastBlock
+		});
+		if (!formattedBlocks) return;
+		insertBlocksAndSelect(formattedBlocks, { at: nextPath });
+	} else {
+		const [, end] = RangeApi.edges(editor.selection);
+		const endPath = [end.path[0]];
+		const currentBlock = editor.api.node({
+			at: endPath,
+			block: true,
+			mode: "lowest"
+		});
+		if (!currentBlock) return;
+		if (format === "none") {
+			insertBlocksAndSelect(cloneDeep(sourceEditor.children), { at: PathApi.next(endPath) });
+			return;
+		}
+		const formattedBlocks = createFormattedBlocks({
+			blocks: cloneDeep(sourceEditor.children),
+			format,
+			sourceBlock: currentBlock
+		});
+		if (!formattedBlocks) return;
+		insertBlocksAndSelect(formattedBlocks, { at: PathApi.next(endPath) });
+	}
+};
+
+//#endregion
+//#region src/react/ai-chat/transforms/removeAnchorAIChat.ts
+const removeAnchorAIChat = (editor, options) => {
+	editor.tf.withoutSaving(() => {
+		editor.tf.removeNodes({
+			at: [],
+			match: (n) => ElementApi.isElement(n) && n.type === getPluginType(editor, KEYS.aiChat),
+			...options
+		});
+	});
+};
+
+//#endregion
+//#region src/react/ai-chat/withAIChat.ts
+const withAIChat = ({ api, editor, getOptions, tf: { insertText, normalizeNode }, type }) => {
+	const tf = editor.getTransforms(AIPlugin);
+	const matchesTrigger = (text) => {
+		const { trigger } = getOptions();
+		if (trigger instanceof RegExp) return trigger.test(text);
+		if (Array.isArray(trigger)) return trigger.includes(text);
+		return text === trigger;
+	};
+	return { transforms: {
+		insertText(text, options) {
+			const { triggerPreviousCharPattern, triggerQuery } = getOptions();
+			const fn = () => {
+				if (!editor.selection || !matchesTrigger(text) || triggerQuery && !triggerQuery(editor)) return;
+				const previousChar = editor.api.string(editor.api.range("before", editor.selection));
+				if (!triggerPreviousCharPattern?.test(previousChar)) return;
+				const nodeEntry = editor.api.block({ highest: true });
+				if (!nodeEntry || !editor.api.isEmpty(nodeEntry[0])) return;
+				api.aiChat.show();
+				return true;
+			};
+			if (fn()) return;
+			return insertText(text, options);
+		},
+		normalizeNode(entry) {
+			const [node, path] = entry;
+			if (node[KEYS.ai] && !getOptions().open) {
+				tf.ai.removeMarks({ at: path });
+				return;
+			}
+			if (ElementApi.isElement(node) && node.type === type && !getOptions().open) {
+				editor.getTransforms(AIChatPlugin).aiChat.removeAnchor({ at: path });
+				return;
+			}
+			return normalizeNode(entry);
+		}
+	} };
+};
+
+//#endregion
+//#region src/react/ai-chat/AIChatPlugin.ts
+const AIChatPlugin = createTPlatePlugin({
+	key: KEYS.aiChat,
+	dependencies: ["ai"],
+	node: { isElement: true },
+	options: {
+		_blockChunks: "",
+		_blockPath: null,
+		_mdxName: null,
+		_replaceIds: [],
+		aiEditor: null,
+		chat: { messages: [] },
+		chatNodes: [],
+		chatSelection: null,
+		experimental_lastTextId: null,
+		mode: "insert",
+		open: false,
+		streaming: false,
+		toolName: null,
+		trigger: " ",
+		triggerPreviousCharPattern: /^\s?$/
+	}
+}).overrideEditor(withAIChat).extendApi(({ editor, getOption, getOptions, setOption, type }) => ({
+	reset: bindFirst(resetAIChat, editor),
+	submit: bindFirst(submitAIChat, editor),
+	node: (options = {}) => {
+		const { anchor = false, streaming = false, ...rest } = options;
+		if (anchor) return editor.api.node({
+			at: [],
+			match: (n) => ElementApi.isElement(n) && n.type === type,
+			...rest
+		});
+		if (streaming) {
+			if (!getOption("streaming")) return;
+			const path = getOption("_blockPath");
+			if (!path) return;
+			return editor.api.node({
+				at: path,
+				mode: "lowest",
+				reverse: true,
+				match: (t) => !!t[getPluginType(editor, KEYS.ai)],
+				...rest
+			});
+		}
+		return editor.api.node({
+			match: (n) => n[getPluginType(editor, KEYS.ai)],
+			...rest
+		});
+	},
+	reload: () => {
+		const { chat, chatNodes, chatSelection } = getOptions();
+		editor.getTransforms(AIPlugin).ai.undo();
+		if (chatSelection) editor.tf.setSelection(chatSelection);
+		else editor.getApi(BlockSelectionPlugin).blockSelection.set(chatNodes.map((node) => node.id));
+		const blocks = editor.getApi(BlockSelectionPlugin).blockSelection.getNodes();
+		const selection = blocks.length > 0 ? editor.api.nodesRange(blocks) : editor.selection;
+		const ctx = {
+			children: editor.children,
+			selection: selection ?? null,
+			toolName: getOption("toolName")
+		};
+		chat.regenerate?.({ body: { ctx } });
+	},
+	stop: () => {
+		setOption("streaming", false);
+		getOptions().chat.stop?.();
+	}
+})).extendApi(({ api, editor, getOptions, setOption, tf }) => ({
+	hide: ({ focus = true, undo = true } = {}) => {
+		api.aiChat.reset({ undo });
+		setOption("open", false);
+		if (focus) if (editor.getOption(BlockSelectionPlugin, "isSelectingSome")) editor.getApi(BlockSelectionPlugin).blockSelection.focus();
+		else editor.tf.focus();
+		const lastBatch = editor.history.undos.at(-1);
+		if (lastBatch?.ai) lastBatch.ai = void 0;
+		tf.aiChat.removeAnchor();
+	},
+	show: () => {
+		api.aiChat.reset();
+		setOption("toolName", null);
+		getOptions().chat.setMessages?.([]);
+		setOption("open", true);
+	}
+})).extendTransforms(({ editor }) => ({
+	accept: bindFirst(acceptAIChat, editor),
+	insertBelow: bindFirst(insertBelowAIChat, editor),
+	removeAnchor: bindFirst(removeAnchorAIChat, editor),
+	replaceSelection: bindFirst(replaceSelectionAIChat, editor)
+}));
+
+//#endregion
+//#region src/react/ai-chat/hooks/useAIChatEditor.ts
+/**
+* Register an editor in the AI chat plugin, and deserializes the content into
+* `editor.children` with block-level memoization.
+*
+* @returns Deserialized children to pass as `value` prop to PlateStatic
+*/
+const useAIChatEditor = (editor, content, { parser } = {}) => {
+	const { setOption } = useEditorPlugin(AIChatPlugin);
+	const children = useMemo(() => {
+		return editor.getApi(MarkdownPlugin).markdown.deserialize(content, {
+			memoize: true,
+			parser
+		});
+	}, [content]);
+	editor.children = children;
+	useEffect(() => {
+		setOption("aiEditor", editor);
+	}, [editor, setOption]);
+	return children;
+};
+
+//#endregion
+//#region src/react/ai-chat/hooks/useChatChunk.ts
+const useChatChunk = ({ onChunk, onFinish }) => {
+	const { status } = usePluginOption({ key: KEYS.aiChat }, "chat");
+	const isLoading = status === "streaming" || status === "submitted";
+	const content = useLastAssistantMessage()?.parts.find((part) => part.type === "text")?.text;
+	const insertedTextRef = useRef("");
+	const prevIsLoadingRef = useRef(isLoading);
+	useEffect(() => {
+		if (!isLoading) insertedTextRef.current = "";
+		if (prevIsLoadingRef.current && !isLoading) onFinish?.({ content: content ?? "" });
+		prevIsLoadingRef.current = isLoading;
+	}, [isLoading]);
+	useEffect(() => {
+		if (!content) return;
+		const chunk = content.slice(insertedTextRef.current.length);
+		const nodes = [];
+		if (chunk) {
+			const isFirst = insertedTextRef.current === "";
+			nodes.push({ text: chunk });
+			onChunk({
+				chunk,
+				isFirst,
+				nodes,
+				text: content
+			});
+		}
+		insertedTextRef.current = content;
+	}, [content]);
+};
+
+//#endregion
+//#region src/react/ai-chat/hooks/useEditorChat.ts
+const useEditorChat = ({ onOpenBlockSelection, onOpenChange, onOpenCursor, onOpenSelection }) => {
+	const { editor } = useEditorPlugin(AIChatPlugin);
+	const open = usePluginOption(AIChatPlugin, "open");
+	useEffect(() => {
+		onOpenChange?.(open);
+		if (open) {
+			if (onOpenBlockSelection) {
+				const blockSelectionApi = editor.getApi(BlockSelectionPlugin).blockSelection;
+				if (editor.getOption(BlockSelectionPlugin, "isSelectingSome")) {
+					onOpenBlockSelection(blockSelectionApi.getNodes());
+					return;
+				}
+			}
+			if (onOpenCursor && editor.api.isCollapsed()) {
+				onOpenCursor();
+				return;
+			}
+			if (onOpenSelection && editor.api.isExpanded()) {
+				onOpenSelection();
+				return;
+			}
+		}
+	}, [open]);
+};
+
+//#endregion
+//#region src/react/ai-chat/streaming/streamDeserializeInlineMd.ts
+const streamDeserializeInlineMd = (editor, text, options) => editor.getApi(MarkdownPlugin).markdown.deserializeInline(text, options);
+
+//#endregion
+//#region src/react/ai-chat/streaming/utils/utils.ts
+const getChunkTrimmed = (chunk, { direction = "right" } = {}) => {
+	const str = direction === "right" ? chunk.trimEnd() : chunk.trimStart();
+	if (direction === "right") return chunk.slice(str.length);
+	return chunk.slice(0, chunk.length - str.length);
+};
+function isCompleteCodeBlock(str) {
+	const trimmed = str.trim();
+	const startsWithCodeBlock = trimmed.startsWith("```");
+	const endsWithCodeBlock = trimmed.endsWith("```");
+	return startsWithCodeBlock && endsWithCodeBlock;
+}
+function isCompleteMath(str) {
+	const trimmed = str.trim();
+	const startsWithMath = trimmed.startsWith("$$");
+	const endsWithMath = trimmed.endsWith("$$");
+	return startsWithMath && endsWithMath;
+}
+
+//#endregion
+//#region src/react/ai-chat/streaming/utils/escapeInput.ts
+const escapeInput = (data) => {
+	let res = data;
+	if (data.startsWith("$$") && !data.startsWith("$$\n") && !isCompleteMath(data)) res = data.replace("$$", String.raw`\$\$`);
+	return res;
+};
+
+//#endregion
+//#region src/react/ai-chat/streaming/utils/getListNode.ts
+const getListNode = (editor, node) => {
+	if (node.listStyleType && node.listStart) {
+		const previousNode = editor.api.previous({ at: editor.selection?.focus })?.[0];
+		if (previousNode?.listStyleType && previousNode?.listStart) return node;
+		if (node.listStart === 1) return node;
+		return {
+			...node,
+			listRestartPolite: node.listStart
+		};
+	}
+	return node;
+};
+
+//#endregion
+//#region src/react/ai-chat/streaming/utils/isSameNode.ts
+const LIST_STYLE_TYPE = "listStyleType";
+const isSameNode = (editor, node1, node2) => {
+	if (node1.type !== editor.getType(KEYS.p) || node2.type !== editor.getType(KEYS.p)) return node1.type === node2.type;
+	if (isDefined(node1[LIST_STYLE_TYPE]) || isDefined(node2[LIST_STYLE_TYPE])) return node1[LIST_STYLE_TYPE] === node2[LIST_STYLE_TYPE];
+	return node1.type === node2.type;
+};
+
+//#endregion
+//#region src/react/ai-chat/streaming/utils/nodesWithProps.ts
+const nodesWithProps = (editor, nodes, options) => nodes.map((node) => {
+	if (ElementApi.isElement(node)) return {
+		...getListNode(editor, node),
+		...options.elementProps,
+		children: nodesWithProps(editor, node.children, options)
+	};
+	return {
+		...options.textProps,
+		...node,
+		text: node.text
+	};
+});
+
+//#endregion
+//#region src/react/ai-chat/streaming/streamDeserializeMd.ts
+const statMdxTagRegex = /<([A-Za-z][A-Za-z0-9._:-]*)(?:\s[^>]*?)?(?<!\/)>/;
+const streamDeserializeMd = (editor, data, options) => {
+	const input = escapeInput(data);
+	const value = withoutDeserializeInMdx(editor, input);
+	if (Array.isArray(value)) return value;
+	let blocks = [];
+	blocks = editor.getApi(MarkdownPlugin).markdown.deserialize(input, {
+		...options,
+		preserveEmptyParagraphs: false
+	});
+	const trimmedData = getChunkTrimmed(data);
+	const lastBlock = blocks.at(-1);
+	const addNewLine = trimmedData === "\n\n";
+	const unshiftNewLine = getChunkTrimmed(data, { direction: "left" }) === "\n\n";
+	const isCodeBlockOrTable = lastBlock?.type === "code_block" || lastBlock?.type === "table";
+	let result = blocks;
+	/**
+	* Deserialize the sting like `123\n\n` will be `123` base on markdown spec
+	* but we want to keep the `\n\n`
+	*/
+	if (lastBlock && !isCodeBlockOrTable && trimmedData.length > 0 && !addNewLine) {
+		const textNode = [{ text: trimmedData }];
+		const lastChild = lastBlock.children.at(-1);
+		/** It’s like normalizing and merging the text nodes. */
+		if (lastChild && TextApi.isText(lastChild) && Object.keys(lastChild).length === 1) {
+			lastBlock.children.pop();
+			const textNode$1 = [{ text: lastChild.text + trimmedData }];
+			lastBlock.children.push(...textNode$1);
+		} else lastBlock.children.push(...textNode);
+		result = [...blocks.slice(0, -1), lastBlock];
+	}
+	if (addNewLine && !isCodeBlockOrTable) result.push({
+		children: [{ text: "" }],
+		type: KEYS.p
+	});
+	if (unshiftNewLine && !isCodeBlockOrTable) result.unshift({
+		children: [{ text: "" }],
+		type: KEYS.p
+	});
+	return result;
+};
+const withoutDeserializeInMdx = (editor, input) => {
+	const mdxName = editor.getOption(AIChatPlugin, "_mdxName");
+	if (mdxName) {
+		if (input.includes(`</${mdxName}>`)) {
+			editor.setOption(AIChatPlugin, "_mdxName", null);
+			return false;
+		}
+		return [{
+			children: [{ text: input }],
+			type: getPluginType(editor, KEYS.p)
+		}];
+	}
+	const newMdxName = statMdxTagRegex.exec(input)?.[1];
+	if (input.startsWith(`<${newMdxName}`)) editor.setOption(AIChatPlugin, "_mdxName", newMdxName ?? null);
+};
+
+//#endregion
+//#region src/react/ai-chat/streaming/streamSerializeMd.ts
+const trimEndHeading = (editor, value) => {
+	const headingKeys = new Set([
+		KEYS.h1,
+		KEYS.h2,
+		KEYS.h3,
+		KEYS.h4,
+		KEYS.h5,
+		KEYS.h6
+	]);
+	const lastBlock = value.at(-1);
+	if (lastBlock && headingKeys.has(getPluginKey(editor, lastBlock.type) ?? lastBlock.type) && ElementApi.isElement(lastBlock)) {
+		const lastTextNode = lastBlock.children.at(-1);
+		if (TextApi.isText(lastTextNode)) {
+			const trimmedText = getChunkTrimmed(lastTextNode?.text);
+			const newChildren = [...lastBlock.children.slice(0, -1), { text: lastTextNode.text.trimEnd() }];
+			const newLastBlock = {
+				...lastBlock,
+				children: newChildren
+			};
+			return {
+				trimmedText,
+				value: [...value.slice(0, -1), newLastBlock]
+			};
+		}
+	}
+	return {
+		trimmedText: "",
+		value
+	};
+};
+const streamSerializeMd = (editor, options, chunk) => {
+	const { value: optionsValue, ...restOptions } = options;
+	const { value } = trimEndHeading(editor, optionsValue ?? editor.children);
+	let result = "";
+	result = editor.getApi(MarkdownPlugin).markdown.serialize({
+		value,
+		...restOptions
+	});
+	const trimmedChunk = getChunkTrimmed(chunk);
+	if (isCompleteCodeBlock(result) && !chunk.endsWith("```")) result = result.trimEnd().slice(0, -3) + trimmedChunk;
+	if (isCompleteMath(result) && !chunk.endsWith("$$")) result = result.trimEnd().slice(0, -3) + trimmedChunk;
+	result = result.replace(/&#x20;/g, " ");
+	result = result.replace(/&#x200B;/g, " ");
+	result = result.replace(/\u200B/g, "");
+	if (trimmedChunk !== "\n\n") result = result.trimEnd() + trimmedChunk;
+	if (chunk.endsWith("\n\n")) {
+		if (result === "\n") result = "";
+		else if (result.endsWith("\n\n")) result = result.slice(0, -1);
+	}
+	result = result.replace(/\\([\\`*_{}\\[\]()#+\-\\.!~<>|$])/g, "$1");
+	return result;
+};
+
+//#endregion
+//#region src/react/ai-chat/streaming/streamInsertChunk.ts
+const getNextPath = (path, length) => {
+	let result = path;
+	for (let i = 0; i < length; i++) result = PathApi.next(result);
+	return result;
+};
+/** @experimental */
+function streamInsertChunk(editor, chunk, options = {}) {
+	const { _blockChunks, _blockPath } = editor.getOptions(AIChatPlugin);
+	if (_blockPath === null) {
+		const blocks = streamDeserializeMd(editor, chunk);
+		const path = getCurrentBlockPath(editor);
+		const startBlock = editor.api.node(path)[0];
+		const startInEmptyParagraph = NodeApi.string(startBlock).length === 0 && startBlock.type === getPluginType(editor, KEYS.p);
+		if (startInEmptyParagraph) editor.tf.removeNodes({ at: path });
+		if (blocks.length > 0) {
+			editor.tf.insertNodes(nodesWithProps(editor, [blocks[0]], options), {
+				at: path,
+				nextBlock: !startInEmptyParagraph,
+				select: true
+			});
+			editor.setOption(AIChatPlugin, "_blockPath", getCurrentBlockPath(editor));
+			editor.setOption(AIChatPlugin, "_blockChunks", chunk);
+			if (blocks.length > 1) {
+				const nextBlocks = blocks.slice(1);
+				const nextPath = getCurrentBlockPath(editor);
+				editor.tf.insertNodes(nodesWithProps(editor, nextBlocks, options), {
+					at: nextPath,
+					nextBlock: true,
+					select: true
+				});
+				const lastBlock = editor.api.node(getNextPath(nextPath, nextBlocks.length));
+				editor.setOption(AIChatPlugin, "_blockPath", lastBlock[1]);
+				const lastBlockChunks = streamSerializeMd(editor, { value: [lastBlock[0]] }, chunk);
+				editor.setOption(AIChatPlugin, "_blockChunks", lastBlockChunks);
+			}
+		}
+	} else {
+		const tempBlockChunks = _blockChunks + chunk;
+		const tempBlocks = streamDeserializeMd(editor, tempBlockChunks);
+		if (tempBlocks.length === 0) return console.warn(`unsupport md nodes: ${JSON.stringify(tempBlockChunks)}`);
+		if (tempBlocks.length === 1) {
+			const currentBlock = editor.api.node(_blockPath)[0];
+			if (isSameNode(editor, currentBlock, tempBlocks[0])) {
+				const chunkNodes = streamDeserializeInlineMd(editor, chunk);
+				editor.tf.insertNodes(nodesWithProps(editor, chunkNodes, options), {
+					at: editor.api.end(_blockPath),
+					select: true
+				});
+				const serializedBlock = streamSerializeMd(editor, { value: [editor.api.node(_blockPath)[0]] }, tempBlockChunks);
+				const blockText = NodeApi.string(tempBlocks[0]);
+				if (serializedBlock === tempBlockChunks && blockText === serializedBlock) editor.setOption(AIChatPlugin, "_blockChunks", tempBlockChunks);
+				else {
+					editor.tf.replaceNodes(nodesWithProps(editor, [tempBlocks[0]], options), {
+						at: _blockPath,
+						select: true
+					});
+					const serializedBlock$1 = streamSerializeMd(editor, { value: [tempBlocks[0]] }, tempBlockChunks);
+					editor.setOption(AIChatPlugin, "_blockChunks", tempBlocks[0].type === getPluginType(editor, KEYS.codeBlock) || tempBlocks[0].type === getPluginType(editor, KEYS.table) || tempBlocks[0].type === getPluginType(editor, KEYS.equation) ? tempBlockChunks : serializedBlock$1);
+				}
+			} else {
+				const serializedBlock = streamSerializeMd(editor, { value: [tempBlocks[0]] }, tempBlockChunks);
+				editor.tf.replaceNodes(nodesWithProps(editor, [tempBlocks[0]], options), {
+					at: _blockPath,
+					select: true
+				});
+				editor.setOption(AIChatPlugin, "_blockChunks", serializedBlock);
+			}
+		} else {
+			editor.tf.replaceNodes(nodesWithProps(editor, [tempBlocks[0]], options), {
+				at: _blockPath,
+				select: true
+			});
+			if (tempBlocks.length > 1) {
+				const newEndBlockPath = getNextPath(_blockPath, tempBlocks.length - 1);
+				editor.tf.insertNodes(nodesWithProps(editor, tempBlocks.slice(1), options), {
+					at: PathApi.next(_blockPath),
+					select: true
+				});
+				editor.setOption(AIChatPlugin, "_blockPath", newEndBlockPath);
+				const endBlock = editor.api.node(newEndBlockPath)[0];
+				const serializedBlock = streamSerializeMd(editor, { value: [endBlock] }, tempBlockChunks);
+				editor.setOption(AIChatPlugin, "_blockChunks", serializedBlock);
+			}
+		}
+	}
+}
+const getCurrentBlockPath = (editor) => {
+	const getAnchorPreviousPath = (editor$1) => {
+		const anchorNode = editor$1.getApi(AIChatPlugin).aiChat.node({ anchor: true });
+		if (anchorNode) return PathApi.previous(anchorNode[1]);
+	};
+	const getFocusPath = (editor$1) => editor$1.selection?.focus.path.slice(0, 1);
+	const path = getAnchorPreviousPath(editor) ?? getFocusPath(editor) ?? [0];
+	const entry = editor.api.node(path);
+	if (entry && (entry[0].type === getPluginType(editor, KEYS.columnGroup) || entry[0].type === getPluginType(editor, KEYS.table))) return editor.api.above()?.[1] ?? path;
+	return path;
+};
+
+//#endregion
+//#region src/react/copilot/renderCopilotBelowNodes.tsx
+const renderCopilotBelowNodes = ({ editor }) => {
+	const { renderGhostText: GhostText } = getEditorPlugin$1(editor, { key: KEYS.copilot }).getOptions();
+	if (!GhostText) return;
+	return ({ children }) => /* @__PURE__ */ React.createElement(React.Fragment, null, children, /* @__PURE__ */ React.createElement(GhostText, null));
+};
+
+//#endregion
+//#region src/react/copilot/transforms/acceptCopilot.ts
+const acceptCopilot = (editor) => {
+	const { suggestionText } = editor.getOptions({ key: KEYS.copilot });
+	if (!suggestionText?.length) return false;
+	editor.tf.insertFragment(deserializeInlineMd(editor, suggestionText));
+};
+
+//#endregion
+//#region src/react/copilot/utils/callCompletionApi.ts
+const getOriginalFetch = () => fetch;
+async function callCompletionApi({ api = "/api/completion", body, credentials, fetch: fetch$1 = getOriginalFetch(), headers, prompt, setAbortController = () => {}, setCompletion = () => {}, setError = () => {}, setLoading = () => {}, onError, onFinish, onResponse }) {
+	try {
+		setLoading(true);
+		setError(null);
+		const abortController = new AbortController();
+		setAbortController(abortController);
+		setCompletion("");
+		const res = await fetch$1(api, {
+			body: JSON.stringify({
+				prompt,
+				...body
+			}),
+			credentials,
+			headers: {
+				"Content-Type": "application/json",
+				...headers
+			},
+			method: "POST",
+			signal: abortController.signal
+		}).catch((error) => {
+			throw error;
+		});
+		if (onResponse) await onResponse(res);
+		if (!res.ok) throw new Error(await res.text() || "Failed to fetch the chat response.");
+		if (!res.body) throw new Error("The response body is empty.");
+		const { text } = await res.json();
+		if (!text) throw new Error("The response does not contain a text field.");
+		setCompletion(text);
+		if (onFinish) onFinish(prompt, text);
+		setAbortController(null);
+		return text;
+	} catch (error) {
+		if (error.name === "AbortError") {
+			setAbortController(null);
+			return null;
+		}
+		if (error instanceof Error && onError) onError(error);
+		setError(error);
+	} finally {
+		setLoading(false);
+	}
+}
+
+//#endregion
+//#region src/react/copilot/utils/getNextWord.ts
+const nonSpaceRegex = /^\s*(\S)/;
+const cjkCharRegex = /[\u1100-\u11FF\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF]/;
+const cjkMatchRegex = /^(\s*)([\u1100-\u11FF\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF])([\u3000-\u303F\uFF00-\uFFEF])?/;
+const nonCjkMatchRegex = /^(\s*\S+?)(?=[\s\u1100-\u11FF\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF]|$)/;
+const getNextWord = ({ text }) => {
+	if (!text) return {
+		firstWord: "",
+		remainingText: ""
+	};
+	const nonSpaceMatch = nonSpaceRegex.exec(text);
+	if (!nonSpaceMatch) return {
+		firstWord: "",
+		remainingText: ""
+	};
+	const firstNonSpaceChar = nonSpaceMatch[1];
+	const isCJKChar = cjkCharRegex.test(firstNonSpaceChar);
+	let firstWord;
+	let remainingText;
+	if (isCJKChar) {
+		const match = cjkMatchRegex.exec(text);
+		if (match) {
+			const [, spaces = "", char = "", punctuation = ""] = match;
+			firstWord = spaces + char + punctuation;
+			remainingText = text.slice(firstWord.length);
+		} else {
+			firstWord = "";
+			remainingText = text;
+		}
+	} else {
+		const match = nonCjkMatchRegex.exec(text);
+		if (match) {
+			firstWord = match[0];
+			remainingText = text.slice(firstWord.length);
+		} else {
+			firstWord = text;
+			remainingText = "";
+		}
+	}
+	return {
+		firstWord,
+		remainingText
+	};
+};
+
+//#endregion
+//#region src/react/copilot/utils/triggerCopilotSuggestion.ts
+const triggerCopilotSuggestion = async (editor) => {
+	const { api, getOptions, setOption } = getEditorPlugin$1(editor, { key: KEYS.copilot });
+	const { completeOptions, getPrompt, isLoading, triggerQuery } = getOptions();
+	if (isLoading || editor.getOptions({ key: KEYS.aiChat }).chat?.isLoading) return false;
+	if (!triggerQuery({ editor })) return false;
+	const prompt = getPrompt({ editor });
+	if (prompt.length === 0) return false;
+	api.copilot.stop();
+	await callCompletionApi({
+		prompt,
+		onFinish: (_, completion) => {
+			api.copilot.setBlockSuggestion({ text: completion });
+		},
+		...completeOptions,
+		setAbortController: (controller) => setOption("abortController", controller),
+		setCompletion: (completion) => setOption("completion", completion),
+		setError: (error) => setOption("error", error),
+		setLoading: (loading) => setOption("isLoading", loading),
+		onError: (error) => {
+			setOption("error", error);
+			completeOptions?.onError?.(error);
+		}
+	});
+};
+
+//#endregion
+//#region src/react/copilot/utils/withoutAbort.ts
+const withoutAbort = (editor, fn) => {
+	editor.setOption(CopilotPlugin, "shouldAbort", false);
+	fn();
+	editor.setOption(CopilotPlugin, "shouldAbort", true);
+};
+
+//#endregion
+//#region src/react/copilot/transforms/acceptCopilotNextWord.ts
+const acceptCopilotNextWord = (editor) => {
+	const { api, getOptions } = getEditorPlugin$1(editor, { key: KEYS.copilot });
+	const { getNextWord: getNextWord$1, suggestionText } = getOptions();
+	if (!suggestionText?.length) return false;
+	const { firstWord, remainingText } = getNextWord$1({ text: suggestionText });
+	api.copilot.setBlockSuggestion({ text: remainingText });
+	withoutAbort(editor, () => {
+		editor.tf.insertFragment(deserializeInlineMd(editor, firstWord));
+	});
+};
+
+//#endregion
+//#region src/react/copilot/withCopilot.ts
+const getPatchString = (editor, operations) => {
+	let string = "";
+	for (const operation of operations) if (operation.type === "insert_node") {
+		const node = operation.node;
+		const text = serializeInlineMd(editor, { value: [node] });
+		string += text;
+	} else if (operation.type === "insert_text") string += operation.text;
+	return string;
+};
+const withCopilot = ({ api, editor, getOptions, setOption, tf: { apply, insertText, redo, setSelection, undo, writeHistory } }) => {
+	let prevSelection = null;
+	return { transforms: {
+		apply(operation) {
+			const { shouldAbort } = getOptions();
+			if (shouldAbort) api.copilot.reject();
+			apply(operation);
+		},
+		insertText(text, options) {
+			const suggestionText = getOptions().suggestionText;
+			if (suggestionText?.startsWith(text)) {
+				withoutAbort(editor, () => {
+					editor.tf.withoutMerging(() => {
+						const newText = suggestionText?.slice(text.length);
+						setOption("suggestionText", newText);
+						insertText(text);
+					});
+				});
+				return;
+			}
+			insertText(text, options);
+		},
+		redo() {
+			if (!getOptions().suggestionText) return redo();
+			const topRedo = editor.history.redos.at(-1);
+			const prevSuggestion = getOptions().suggestionText;
+			if (topRedo && topRedo.shouldAbort === false && prevSuggestion) {
+				withoutAbort(editor, () => {
+					const shouldRemoveText = getPatchString(editor, topRedo.operations);
+					setOption("suggestionText", prevSuggestion.slice(shouldRemoveText.length));
+					redo();
+				});
+				return;
+			}
+			return redo();
+		},
+		setSelection(props) {
+			setSelection(props);
+			if (editor.selection && (!prevSelection || !RangeApi.equals(prevSelection, editor.selection)) && getOptions().autoTriggerQuery({ editor }) && editor.api.isFocused()) api.copilot.triggerSuggestion();
+			prevSelection = editor.selection;
+		},
+		undo() {
+			if (!getOptions().suggestionText) return undo();
+			const lastUndos = editor.history.undos.at(-1);
+			const oldText = getOptions().suggestionText;
+			if (lastUndos && lastUndos.shouldAbort === false && oldText) {
+				withoutAbort(editor, () => {
+					setOption("suggestionText", getPatchString(editor, lastUndos.operations) + oldText);
+					undo();
+				});
+				return;
+			}
+			return undo();
+		},
+		writeHistory(stacks, batch) {
+			if (!getOptions().isLoading) batch.shouldAbort = getOptions().shouldAbort;
+			return writeHistory(stacks, batch);
+		}
+	} };
+};
+
+//#endregion
+//#region src/react/copilot/CopilotPlugin.tsx
+const CopilotPlugin = createTPlatePlugin({
+	key: KEYS.copilot,
+	handlers: {
+		onBlur: ({ api }) => {
+			api.copilot.reject();
+		},
+		onMouseDown: ({ api }) => {
+			api.copilot.reject();
+		}
+	},
+	options: {
+		abortController: null,
+		completeOptions: {},
+		completion: "",
+		debounceDelay: 0,
+		error: null,
+		getNextWord,
+		isLoading: false,
+		renderGhostText: null,
+		shouldAbort: true,
+		suggestionNodeId: null,
+		suggestionText: null,
+		autoTriggerQuery: ({ editor }) => {
+			if (editor.getOptions({ key: KEYS.copilot }).suggestionText) return false;
+			if (editor.api.isEmpty(editor.selection, { block: true })) return false;
+			const blockAbove = editor.api.block();
+			if (!blockAbove) return false;
+			return NodeApi.string(blockAbove[0]).at(-1) === " ";
+		},
+		getPrompt: ({ editor }) => {
+			const contextEntry = editor.api.block({ highest: true });
+			if (!contextEntry) return "";
+			return serializeMd(editor, { value: [contextEntry[0]] });
+		},
+		triggerQuery: ({ editor }) => {
+			if (editor.api.isExpanded()) return false;
+			if (!editor.api.isAt({ end: true })) return false;
+			return true;
+		}
+	}
+}).overrideEditor(withCopilot).extendSelectors(({ getOptions }) => ({ isSuggested: (id) => getOptions().suggestionNodeId === id })).extendTransforms(({ editor }) => ({
+	accept: bindFirst(acceptCopilot, editor),
+	acceptNextWord: bindFirst(acceptCopilotNextWord, editor)
+})).extendApi(({ api, editor, getOptions, setOption, setOptions }) => {
+	const debounceDelay = getOptions().debounceDelay;
+	let triggerSuggestion = bindFirst(triggerCopilotSuggestion, editor);
+	if (debounceDelay) triggerSuggestion = debounce(bindFirst(triggerCopilotSuggestion, editor), debounceDelay);
+	return {
+		triggerSuggestion,
+		setBlockSuggestion: ({ id = getOptions().suggestionNodeId, text }) => {
+			if (!id) id = editor.api.block()[0].id;
+			setOptions({
+				suggestionNodeId: id,
+				suggestionText: text
+			});
+		},
+		stop: () => {
+			const { abortController } = getOptions();
+			api.copilot.triggerSuggestion?.cancel();
+			if (abortController) {
+				abortController.abort();
+				setOption("abortController", null);
+			}
+		}
+	};
+}).extendApi(({ api, getOptions, setOptions }) => ({ reject: () => {
+	if (!getOptions().suggestionText?.length) return false;
+	api.copilot.stop();
+	setOptions({
+		completion: null,
+		suggestionNodeId: null,
+		suggestionText: null
+	});
+} })).extend({
+	render: { belowNodes: renderCopilotBelowNodes },
+	shortcuts: {
+		accept: { keys: "tab" },
+		reject: { keys: "escape" }
+	}
+});
+
+//#endregion
+export { AIChatPlugin, AIPlugin, CopilotPlugin, acceptAIChat, acceptAISuggestions, acceptCopilot, acceptCopilotNextWord, aiCommentToRange, applyAISuggestions, applyTableCellSuggestion, callCompletionApi, createFormattedBlocks, escapeInput, findTextRangeInBlock, getChunkTrimmed, getCurrentBlockPath, getLastAssistantMessage, getListNode, getNextWord, getTableCellChildren, insertBelowAIChat, insertBelowGenerate, isCompleteCodeBlock, isCompleteMath, isSameNode, isSingleCellTable, nodesWithProps, rejectAISuggestions, removeAnchorAIChat, renderCopilotBelowNodes, replaceSelectionAIChat, resetAIChat, streamDeserializeInlineMd, streamDeserializeMd, streamInsertChunk, streamSerializeMd, submitAIChat, triggerCopilotSuggestion, useAIChatEditor, useChatChunk, useEditorChat, useLastAssistantMessage, withAIChat, withCopilot, withTransient, withoutAbort, withoutSuggestionAndComments };

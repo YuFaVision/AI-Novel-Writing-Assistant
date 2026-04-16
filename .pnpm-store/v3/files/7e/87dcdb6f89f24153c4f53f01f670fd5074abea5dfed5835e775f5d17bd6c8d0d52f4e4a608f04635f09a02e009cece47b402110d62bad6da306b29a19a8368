@@ -1,0 +1,6 @@
+export const mockStreamCallbackFactory = (events) => async function* () {
+    for (const event of events) {
+        yield event;
+    }
+};
+//# sourceMappingURL=testUtils.js.map

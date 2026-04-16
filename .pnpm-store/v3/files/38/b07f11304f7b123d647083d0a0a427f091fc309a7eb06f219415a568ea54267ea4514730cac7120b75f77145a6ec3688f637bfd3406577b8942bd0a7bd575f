@@ -1,0 +1,56 @@
+export class FrameClient {
+    listeners = new Set();
+    connectionListeners = new Set();
+    lastUpdate = {};
+    constructor() {
+        this.setupMessageListener();
+    }
+    setupMessageListener() {
+        window.addEventListener("message", (event) => {
+            const message = event.data;
+            if (message.type === "update") {
+                this.lastUpdate = message.data;
+                this.notifyListeners(message.data);
+            }
+            else if (message.type === "host-connected") {
+                // Host has reconnected (page refresh), notify listeners to re-subscribe
+                this.connectionListeners.forEach((listener) => listener());
+            }
+        });
+    }
+    onHostConnected(listener) {
+        this.connectionListeners.add(listener);
+        return () => {
+            this.connectionListeners.delete(listener);
+        };
+    }
+    subscribe(listener) {
+        this.listeners.add(listener);
+        // Send the last update to the new listener
+        if (this.lastUpdate.apiList || this.lastUpdate.apis) {
+            listener(this.lastUpdate);
+        }
+        return () => {
+            this.listeners.delete(listener);
+        };
+    }
+    setSubscription(options) {
+        window.parent.postMessage({
+            type: "subscription",
+            data: options,
+        }, "*");
+    }
+    clearEvents(apiId) {
+        window.parent.postMessage({
+            type: "clearEvents",
+            data: { apiId },
+        }, "*");
+    }
+    notifyListeners(data) {
+        this.listeners.forEach((listener) => listener(data));
+    }
+    getLastUpdate() {
+        return this.lastUpdate;
+    }
+}
+//# sourceMappingURL=FrameClient.js.map

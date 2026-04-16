@@ -1,0 +1,2047 @@
+import { a as removeAINodes, i as undoAI, n as BaseAIPlugin, o as removeAIMarks, r as withAIBatch, s as insertAINodes, t as getEditorPrompt } from "./getEditorPrompt-BnVrgUl3.js";
+import { ElementApi, KEYS, NodeApi, PathApi, RangeApi, TextApi, bindFirst, combineTransformMatchOptions, createSlatePlugin, createTSlatePlugin, getEditorPlugin, getPluginTypes, isHotkey } from "platejs";
+import { serializeMd } from "@platejs/markdown";
+import cloneDeep from "lodash/cloneDeep.js";
+
+//#region ../table/dist/constants-B6Sm9BNa.js
+const getEmptyCellNode = (editor, { children, header, row } = {}) => {
+	header = header ?? (row ? row.children.every((c) => c.type === editor.getType(KEYS.th)) : false);
+	return {
+		children: children ?? [editor.api.create.block()],
+		type: header ? editor.getType(KEYS.th) : editor.getType(KEYS.td)
+	};
+};
+const getEmptyRowNode = (editor, { colCount = 1, ...cellOptions } = {}) => {
+	const { api } = editor.getPlugin({ key: KEYS.table });
+	return {
+		children: Array.from({ length: colCount }).fill(colCount).map(() => api.create.tableCell(cellOptions)),
+		type: editor.getType(KEYS.tr)
+	};
+};
+const getEmptyTableNode = (editor, { colCount, header, rowCount = 0, ...cellOptions } = {}) => {
+	const { api } = editor.getPlugin({ key: KEYS.table });
+	return {
+		children: Array.from({ length: rowCount }).fill(rowCount).map((_, index) => api.create.tableRow({
+			colCount,
+			...cellOptions,
+			header: header && index === 0
+		})),
+		type: editor.getType(KEYS.table)
+	};
+};
+const getCellInNextTableRow = (editor, currentRowPath) => {
+	const nextRow = editor.api.node(PathApi.next(currentRowPath));
+	if (!nextRow) return;
+	const [nextRowNode, nextRowPath] = nextRow;
+	const nextCell = nextRowNode?.children?.[0];
+	const nextCellPath = nextRowPath.concat(0);
+	if (nextCell && nextCellPath) return editor.api.node(nextCellPath);
+};
+const getCellInPreviousTableRow = (editor, currentRowPath) => {
+	const prevPath = PathApi.previous(currentRowPath);
+	if (!prevPath) return;
+	const previousRow = editor.api.node(prevPath);
+	if (!previousRow) return;
+	const [previousRowNode, previousRowPath] = previousRow;
+	const previousCell = previousRowNode?.children?.[previousRowNode.children.length - 1];
+	const previousCellPath = previousRowPath.concat(previousRowNode.children.length - 1);
+	if (previousCell && previousCellPath) return editor.api.node(previousCellPath);
+};
+/**
+* Returns the colspan attribute of the table cell element.
+*
+* @default 1 if undefined.
+*/
+const getColSpan = (cellElem) => cellElem.colSpan || Number(cellElem.attributes?.colspan) || 1;
+function computeCellIndices(editor, { all, cellNode, tableNode }) {
+	const { api, getOptions, setOption } = getEditorPlugin(editor, { key: KEYS.table });
+	if (!tableNode) {
+		if (!cellNode) return;
+		tableNode = editor.api.above({
+			at: cellNode,
+			match: { type: editor.getType(KEYS.table) }
+		})?.[0];
+		if (!tableNode) return;
+	}
+	const { _cellIndices: prevIndices } = getOptions();
+	const cellIndices = { ...prevIndices };
+	let hasIndicesChanged = false;
+	const skipCells = [];
+	let targetIndices;
+	for (let rowIndex = 0; rowIndex < tableNode.children.length; rowIndex++) {
+		const row = tableNode.children[rowIndex];
+		let colIndex = 0;
+		for (const cellElement of row.children) {
+			while (skipCells[rowIndex]?.[colIndex]) colIndex++;
+			const currentIndices = {
+				col: colIndex,
+				row: rowIndex
+			};
+			const prevIndicesForCell = prevIndices[cellElement.id];
+			if (prevIndicesForCell?.col !== currentIndices.col || prevIndicesForCell?.row !== currentIndices.row) hasIndicesChanged = true;
+			cellIndices[cellElement.id] = currentIndices;
+			if (cellElement.id === cellNode?.id) {
+				targetIndices = currentIndices;
+				if (!all) break;
+			}
+			const colSpan = api.table.getColSpan(cellElement);
+			const rowSpan = api.table.getRowSpan(cellElement);
+			for (let r = 0; r < rowSpan; r++) {
+				skipCells[rowIndex + r] = skipCells[rowIndex + r] || [];
+				for (let c = 0; c < colSpan; c++) skipCells[rowIndex + r][colIndex + c] = true;
+			}
+			colIndex += colSpan;
+		}
+	}
+	if (hasIndicesChanged) setOption("_cellIndices", cellIndices);
+	return targetIndices;
+}
+const getCellIndices = (editor, element) => {
+	const { getOption } = getEditorPlugin(editor, { key: KEYS.table });
+	let indices = getOption("cellIndices", element.id);
+	if (!indices) {
+		indices = computeCellIndices(editor, { cellNode: element });
+		if (!indices) editor.api.debug.warn("No cell indices found for element. Make sure all table cells have an id.", "TABLE_CELL_INDICES");
+	}
+	return indices ?? {
+		col: 0,
+		row: 0
+	};
+};
+const getCellRowIndexByPath = (cellPath) => {
+	const index = cellPath.at(-2);
+	if (index === void 0) throw new Error(`can not get rowIndex of path ${cellPath}`);
+	return index;
+};
+/** Get td and th types */
+const getCellTypes = (editor) => getPluginTypes(editor, [KEYS.td, KEYS.th]);
+const getNextTableCell = (editor, _currentCell, currentPath, currentRow) => {
+	const cell = editor.api.node(PathApi.next(currentPath));
+	if (cell) return cell;
+	const [, currentRowPath] = currentRow;
+	return getCellInNextTableRow(editor, currentRowPath);
+};
+const getPreviousTableCell = (editor, _currentCell, currentPath, currentRow) => {
+	const prevPath = PathApi.previous(currentPath);
+	if (!prevPath) {
+		const [, currentRowPath] = currentRow;
+		return getCellInPreviousTableRow(editor, currentRowPath);
+	}
+	const cell = editor.api.node(prevPath);
+	if (cell) return cell;
+};
+/**
+* Returns the rowspan attribute of the table cell element.
+*
+* @default 1 if undefined
+*/
+const getRowSpan = (cellElem) => cellElem.rowSpan || Number(cellElem.attributes?.rowspan) || 1;
+const getTableAbove = (editor, options) => editor.api.block({
+	above: true,
+	match: { type: editor.getType(KEYS.table) },
+	...options
+});
+const getTableCellBorders = (editor, { cellIndices, defaultBorder = { size: 1 }, element }) => {
+	const cellPath = editor.api.findPath(element);
+	const [rowNode, rowPath] = editor.api.parent(cellPath) ?? [];
+	if (!rowNode || !rowPath) return {
+		bottom: defaultBorder,
+		right: defaultBorder
+	};
+	const [tableNode] = editor.api.parent(rowPath);
+	const { col } = cellIndices ?? getCellIndices(editor, element);
+	const isFirstCell = col === 0;
+	const isFirstRow = tableNode.children?.[0] === rowNode;
+	const getBorder = (dir) => {
+		const border = element.borders?.[dir];
+		return {
+			color: border?.color ?? defaultBorder.color,
+			size: border?.size ?? defaultBorder.size,
+			style: border?.style ?? defaultBorder.style
+		};
+	};
+	return {
+		bottom: getBorder("bottom"),
+		left: isFirstCell ? getBorder("left") : void 0,
+		right: getBorder("right"),
+		top: isFirstRow ? getBorder("top") : void 0
+	};
+};
+/** Get the width of a cell with colSpan support. */
+const getTableCellSize = (editor, { cellIndices, colSizes, element, rowSize }) => {
+	const { api } = getEditorPlugin(editor, { key: KEYS.table });
+	const path = editor.api.findPath(element);
+	if (!rowSize) {
+		const [rowElement] = editor.api.parent(path) ?? [];
+		if (!rowElement) return {
+			minHeight: 0,
+			width: 0
+		};
+		rowSize = rowElement.size;
+	}
+	if (!colSizes) {
+		const [, rowPath] = editor.api.parent(path);
+		const [tableNode] = editor.api.parent(rowPath);
+		colSizes = getTableOverriddenColSizes(tableNode);
+	}
+	const colSpan = api.table.getColSpan(element);
+	const { col } = cellIndices ?? getCellIndices(editor, element);
+	const width = (colSizes ?? []).slice(col, col + colSpan).reduce((total, w) => total + (w || 0), 0);
+	return {
+		minHeight: rowSize,
+		width
+	};
+};
+const getTableColumnCount = (tableNode) => {
+	if (tableNode.children?.[0]?.children) return tableNode.children[0].children.map((element) => element.colSpan || element?.attributes?.colspan || 1).reduce((total, num) => Number(total) + Number(num));
+	return 0;
+};
+/**
+* If at (default = selection) is in table>tr>td|th, return table, row, and cell
+* node entries.
+*/
+const getTableEntries = (editor, { at = editor.selection } = {}) => {
+	if (!at) return;
+	const cellEntry = editor.api.node({
+		at,
+		match: { type: getCellTypes(editor) }
+	});
+	if (!cellEntry) return;
+	const [, cellPath] = cellEntry;
+	const rowEntry = editor.api.above({
+		at: cellPath,
+		match: { type: editor.getType(KEYS.tr) }
+	});
+	if (!rowEntry) return;
+	const [, rowPath] = rowEntry;
+	const tableEntry = editor.api.above({
+		at: rowPath,
+		match: { type: editor.getType(KEYS.table) }
+	});
+	if (!tableEntry) return;
+	return {
+		cell: cellEntry,
+		row: rowEntry,
+		table: tableEntry
+	};
+};
+const getCellIndicesWithSpans = ({ col, row }, endCell) => ({
+	col: col + getColSpan(endCell) - 1,
+	row: row + getRowSpan(endCell) - 1
+});
+const findCellByIndexes = (editor, table, searchRowIndex, searchColIndex) => {
+	return table.children.flatMap((current) => current.children).find((cellNode) => {
+		const indices = getCellIndices(editor, cellNode);
+		const { col: _startColIndex, row: _startRowIndex } = indices;
+		const { col: _endColIndex, row: _endRowIndex } = getCellIndicesWithSpans(indices, cellNode);
+		if (searchColIndex >= _startColIndex && searchColIndex <= _endColIndex && searchRowIndex >= _startRowIndex && searchRowIndex <= _endRowIndex) return true;
+		return false;
+	});
+};
+/**
+* Get sub table between 2 cell paths. Ensure that the selection is always a
+* valid table grid.
+*/
+const getTableMergeGridByRange = (editor, { at, format }) => {
+	const { api, type } = getEditorPlugin(editor, BaseTablePlugin);
+	const startCellEntry = editor.api.node({
+		at: at.anchor.path,
+		match: { type: getCellTypes(editor) }
+	});
+	const endCellEntry = editor.api.node({
+		at: at.focus.path,
+		match: { type: getCellTypes(editor) }
+	});
+	const startCell = startCellEntry[0];
+	const endCell = endCellEntry[0];
+	const tablePath = at.anchor.path.slice(0, -2);
+	const realTable = editor.api.node({
+		at: tablePath,
+		match: { type }
+	})[0];
+	const { col: _startColIndex, row: _startRowIndex } = getCellIndicesWithSpans(getCellIndices(editor, startCell), startCell);
+	const { col: _endColIndex, row: _endRowIndex } = getCellIndicesWithSpans(getCellIndices(editor, endCell), endCell);
+	let startRowIndex = Math.min(_startRowIndex, _endRowIndex);
+	let endRowIndex = Math.max(_startRowIndex, _endRowIndex);
+	let startColIndex = Math.min(_startColIndex, _endColIndex);
+	let endColIndex = Math.max(_startColIndex, _endColIndex);
+	const relativeRowIndex = endRowIndex - startRowIndex;
+	const relativeColIndex = endColIndex - startColIndex;
+	let table = api.create.table({
+		children: [],
+		colCount: relativeColIndex + 1,
+		rowCount: relativeRowIndex + 1
+	});
+	let cellEntries = [];
+	let cellsSet = /* @__PURE__ */ new WeakSet();
+	let rowIndex = startRowIndex;
+	let colIndex = startColIndex;
+	while (true) {
+		const cell = findCellByIndexes(editor, realTable, rowIndex, colIndex);
+		if (!cell) break;
+		const indicies = getCellIndices(editor, cell);
+		const { col: cellColWithSpan, row: cellRowWithSpan } = getCellIndicesWithSpans(indicies, cell);
+		const { col: cellCol, row: cellRow } = indicies;
+		if (cellRow < startRowIndex || cellRowWithSpan > endRowIndex || cellCol < startColIndex || cellColWithSpan > endColIndex) {
+			cellsSet = /* @__PURE__ */ new WeakSet();
+			cellEntries = [];
+			startRowIndex = Math.min(startRowIndex, cellRow);
+			endRowIndex = Math.max(endRowIndex, cellRowWithSpan);
+			startColIndex = Math.min(startColIndex, cellCol);
+			endColIndex = Math.max(endColIndex, cellColWithSpan);
+			rowIndex = startRowIndex;
+			colIndex = startColIndex;
+			const newRelativeRowIndex = endRowIndex - startRowIndex;
+			const newRelativeColIndex = endColIndex - startColIndex;
+			table = api.create.table({
+				children: [],
+				colCount: newRelativeColIndex + 1,
+				rowCount: newRelativeRowIndex + 1
+			});
+			continue;
+		}
+		if (!cellsSet.has(cell)) {
+			cellsSet.add(cell);
+			const rows = table.children[rowIndex - startRowIndex].children;
+			rows[colIndex - startColIndex] = cell;
+			const cellPath = editor.api.findPath(cell);
+			cellEntries.push([cell, cellPath]);
+		}
+		if (colIndex + 1 <= endColIndex) colIndex += 1;
+		else if (rowIndex + 1 <= endRowIndex) {
+			colIndex = startColIndex;
+			rowIndex += 1;
+		} else break;
+	}
+	const formatType = format || "table";
+	if (formatType === "cell") return cellEntries;
+	table.children?.forEach((rowEl) => {
+		const rowElement = rowEl;
+		rowElement.children = rowElement.children?.filter((cellEl) => {
+			const cellElement = cellEl;
+			return api.table.getCellChildren(cellElement).length > 0;
+		});
+	});
+	if (formatType === "table") return [[table, tablePath]];
+	return {
+		cellEntries,
+		tableEntries: [[table, tablePath]]
+	};
+};
+/** Get sub table between 2 cell paths. */
+const getTableGridByRange = (editor, { at, format = "table" }) => {
+	const { api } = editor.getPlugin({ key: KEYS.table });
+	const { disableMerge } = editor.getOptions(BaseTablePlugin);
+	if (!disableMerge) return getTableMergeGridByRange(editor, {
+		at,
+		format
+	});
+	const startCellPath = at.anchor.path;
+	const endCellPath = at.focus.path;
+	const _startRowIndex = startCellPath.at(-2);
+	const _endRowIndex = endCellPath.at(-2);
+	const _startColIndex = startCellPath.at(-1);
+	const _endColIndex = endCellPath.at(-1);
+	const startRowIndex = Math.min(_startRowIndex, _endRowIndex);
+	const endRowIndex = Math.max(_startRowIndex, _endRowIndex);
+	const startColIndex = Math.min(_startColIndex, _endColIndex);
+	const endColIndex = Math.max(_startColIndex, _endColIndex);
+	const tablePath = startCellPath.slice(0, -2);
+	const relativeRowIndex = endRowIndex - startRowIndex;
+	const relativeColIndex = endColIndex - startColIndex;
+	const table = api.create.table({
+		children: [],
+		colCount: relativeColIndex + 1,
+		rowCount: relativeRowIndex + 1
+	});
+	let rowIndex = startRowIndex;
+	let colIndex = startColIndex;
+	const cellEntries = [];
+	while (true) {
+		const cellPath = tablePath.concat([rowIndex, colIndex]);
+		const cell = NodeApi.get(editor, cellPath);
+		if (!cell) break;
+		const rows = table.children[rowIndex - startRowIndex].children;
+		rows[colIndex - startColIndex] = cell;
+		cellEntries.push([cell, cellPath]);
+		if (colIndex + 1 <= endColIndex) colIndex += 1;
+		else if (rowIndex + 1 <= endRowIndex) {
+			colIndex = startColIndex;
+			rowIndex += 1;
+		} else break;
+	}
+	if (format === "cell") return cellEntries;
+	return [[table, tablePath]];
+};
+/** Get sub table above anchor and focus. Format: tables or cells. */
+const getTableGridAbove = (editor, { format = "table", ...options } = {}) => {
+	const { api } = editor.getPlugin({ key: KEYS.table });
+	const edges = editor.api.edgeBlocks({
+		match: { type: getCellTypes(editor) },
+		...options
+	});
+	if (edges) {
+		const [start, end] = edges;
+		if (!PathApi.equals(start[1], end[1])) return getTableGridByRange(editor, {
+			at: {
+				anchor: {
+					offset: 0,
+					path: start[1]
+				},
+				focus: {
+					offset: 0,
+					path: end[1]
+				}
+			},
+			format
+		});
+		if (format === "table") {
+			const table = api.create.table({ rowCount: 1 });
+			table.children[0].children = [start[0]];
+			return [[table, start[1].slice(0, -2)]];
+		}
+		return [start];
+	}
+	return [];
+};
+/**
+* Returns node.colSizes if it exists, applying overrides, otherwise returns a
+* 0-filled array.
+*/
+const getTableOverriddenColSizes = (tableNode, colSizeOverrides) => {
+	const colCount = getTableColumnCount(tableNode);
+	return (tableNode.colSizes ? [...tableNode.colSizes] : Array.from({ length: colCount }).fill(0)).map((size, index) => colSizeOverrides?.get?.(index) ?? size);
+};
+const deleteColumnWhenExpanded = (editor, tableEntry) => {
+	const [start, end] = RangeApi.edges(editor.selection);
+	const firstRow = NodeApi.child(tableEntry[0], 0);
+	const lastRow = NodeApi.child(tableEntry[0], tableEntry[0].children.length - 1);
+	const firstSelectionRow = editor.api.above({
+		at: start,
+		match: (n) => n.type === KEYS.tr
+	});
+	const lastSelectionRow = editor.api.above({
+		at: end,
+		match: (n) => n.type === KEYS.tr
+	});
+	if (!firstSelectionRow || !lastSelectionRow) return;
+	if (firstRow.id === firstSelectionRow[0].id && lastSelectionRow[0].id === lastRow.id) deleteSelection(editor);
+};
+const deleteSelection = (editor) => {
+	const cells = getTableGridAbove(editor, { format: "cell" });
+	const pathRefs = [];
+	cells.forEach(([_cell, cellPath]) => {
+		pathRefs.push(editor.api.pathRef(cellPath));
+	});
+	pathRefs.forEach((pathRef) => {
+		editor.tf.removeNodes({ at: pathRef.unref() });
+	});
+};
+const getCellPath = (editor, tableEntry, curRowIndex, curColIndex) => {
+	const [tableNode, tablePath] = tableEntry;
+	const foundColIndex = tableNode.children[curRowIndex].children.findIndex((c) => {
+		const { col: colIndex } = getCellIndices(editor, c);
+		return colIndex === curColIndex;
+	});
+	return tablePath.concat([curRowIndex, foundColIndex]);
+};
+const deleteTableMergeColumn = (editor) => {
+	const type = editor.getType(KEYS.table);
+	const tableEntry = editor.api.above({ match: { type } });
+	if (!tableEntry) return;
+	editor.tf.withoutNormalizing(() => {
+		const { api } = getEditorPlugin(editor, BaseTablePlugin);
+		if (editor.api.isExpanded()) return deleteColumnWhenExpanded(editor, tableEntry);
+		const table = tableEntry[0];
+		const selectedCellEntry = editor.api.above({ match: { type: getCellTypes(editor) } });
+		if (!selectedCellEntry) return;
+		const selectedCell = selectedCellEntry[0];
+		const { col: deletingColIndex } = getCellIndices(editor, selectedCell);
+		const colsDeleteNumber = api.table.getColSpan(selectedCell);
+		const endingColIndex = deletingColIndex + colsDeleteNumber - 1;
+		const rowNumber = table.children.length;
+		const affectedCellsSet = /* @__PURE__ */ new Set();
+		for (const rI of Array.from({ length: rowNumber }, (_, i) => i)) for (const cI of Array.from({ length: colsDeleteNumber }, (_, i) => i)) {
+			const found = findCellByIndexes(editor, table, rI, deletingColIndex + cI);
+			if (found) affectedCellsSet.add(found);
+		}
+		const affectedCells = Array.from(affectedCellsSet);
+		const { squizeColSpanCells } = affectedCells.reduce((acc, cur) => {
+			if (!cur) return acc;
+			const currentCell = cur;
+			const { col: curColIndex } = getCellIndices(editor, currentCell);
+			const curColSpan = api.table.getColSpan(currentCell);
+			if (curColIndex < deletingColIndex && curColSpan > 1) acc.squizeColSpanCells.push(currentCell);
+			else if (curColSpan > 1 && curColIndex + curColSpan - 1 > endingColIndex) acc.squizeColSpanCells.push(currentCell);
+			return acc;
+		}, { squizeColSpanCells: [] });
+		/** Change colSpans */
+		squizeColSpanCells.forEach((cur) => {
+			const curCell = cur;
+			const { col: curColIndex, row: curColRowIndex } = getCellIndices(editor, curCell);
+			const curColSpan = api.table.getColSpan(curCell);
+			const curCellPath = getCellPath(editor, tableEntry, curColRowIndex, curColIndex);
+			const colSpan = curColSpan - (Math.min(curColIndex + curColSpan - 1, endingColIndex) - deletingColIndex + 1);
+			const newCell = cloneDeep({
+				...curCell,
+				colSpan
+			});
+			if (newCell.attributes?.colspan) newCell.attributes.colspan = colSpan.toString();
+			editor.tf.setNodes(newCell, { at: curCellPath });
+		});
+		const trEntry = editor.api.above({ match: { type: editor.getType(KEYS.tr) } });
+		/** Remove cells */
+		if (selectedCell && trEntry && tableEntry && trEntry[0].children.length > 1) {
+			const [tableNode, tablePath] = tableEntry;
+			const paths = [];
+			affectedCells.forEach((cur) => {
+				const curCell = cur;
+				const { col: curColIndex, row: curRowIndex } = getCellIndices(editor, curCell);
+				if (!squizeColSpanCells.includes(curCell) && curColIndex >= deletingColIndex && curColIndex <= endingColIndex) {
+					const cellPath = getCellPath(editor, tableEntry, curRowIndex, curColIndex);
+					if (!paths[curRowIndex]) paths[curRowIndex] = [];
+					paths[curRowIndex].push(cellPath);
+				}
+			});
+			paths.forEach((cellPaths) => {
+				const pathToDelete = cellPaths[0];
+				cellPaths.forEach(() => {
+					editor.tf.removeNodes({ at: pathToDelete });
+				});
+			});
+			const { colSizes } = tableNode;
+			if (colSizes) {
+				const newColSizes = [...colSizes];
+				newColSizes.splice(deletingColIndex, 1);
+				editor.tf.setNodes({ colSizes: newColSizes }, { at: tablePath });
+			}
+		}
+	});
+};
+const deleteRowWhenExpanded = (editor, [table, tablePath]) => {
+	const { api } = getEditorPlugin(editor, BaseTablePlugin);
+	const columnCount = getTableMergedColumnCount(table);
+	const cells = getTableGridAbove(editor, { format: "cell" });
+	const firsRowIndex = getCellRowIndexByPath(cells[0][1]);
+	if (firsRowIndex === null) return;
+	let acrossColumn = 0;
+	let lastRowIndex = -1;
+	let rowSpanCarry = 0;
+	let acrossRow = 0;
+	cells.forEach(([cell, cellPath]) => {
+		if (cellPath.at(-2) === firsRowIndex) acrossColumn += cell.colSpan ?? 1;
+		const currentRowIndex = getCellRowIndexByPath(cellPath);
+		if (lastRowIndex !== currentRowIndex) {
+			if (rowSpanCarry !== 0) {
+				rowSpanCarry--;
+				return;
+			}
+			const rowSpan = api.table.getRowSpan(cell);
+			rowSpanCarry = rowSpan && rowSpan > 1 ? rowSpan - 1 : 0;
+			acrossRow += rowSpan ?? 1;
+		}
+		lastRowIndex = currentRowIndex;
+	});
+	if (acrossColumn === columnCount) {
+		const pathRefs = [];
+		for (let i = firsRowIndex; i < firsRowIndex + acrossRow; i++) {
+			const removedPath = tablePath.concat(i);
+			pathRefs.push(editor.api.pathRef(removedPath));
+		}
+		pathRefs.forEach((item) => {
+			editor.tf.removeNodes({ at: item.unref() });
+		});
+	}
+};
+const deleteTableMergeRow = (editor) => {
+	const { api, tf, type } = getEditorPlugin(editor, { key: KEYS.table });
+	if (editor.api.some({ match: { type } })) {
+		const currentTableItem = editor.api.above({ match: { type } });
+		if (!currentTableItem) return;
+		if (editor.api.isExpanded()) return deleteRowWhenExpanded(editor, currentTableItem);
+		const table = currentTableItem[0];
+		const selectedCellEntry = editor.api.above({ match: { type: getCellTypes(editor) } });
+		if (!selectedCellEntry) return;
+		const selectedCell = selectedCellEntry[0];
+		const { row: deletingRowIndex } = getCellIndices(editor, selectedCell);
+		const rowsDeleteNumber = api.table.getRowSpan(selectedCell);
+		const endingRowIndex = deletingRowIndex + rowsDeleteNumber - 1;
+		const colNumber = getTableColumnCount(table);
+		const affectedCellsSet = /* @__PURE__ */ new Set();
+		for (const cI of Array.from({ length: colNumber }, (_, i) => i)) for (const rI of Array.from({ length: rowsDeleteNumber }, (_, i) => i)) {
+			const found = findCellByIndexes(editor, table, deletingRowIndex + rI, cI);
+			affectedCellsSet.add(found);
+		}
+		const { moveToNextRowCells, squizeRowSpanCells } = Array.from(affectedCellsSet).reduce((acc, cur) => {
+			if (!cur) return acc;
+			const currentCell = cur;
+			const { row: curRowIndex } = getCellIndices(editor, currentCell);
+			const curRowSpan = api.table.getRowSpan(currentCell);
+			if (curRowIndex < deletingRowIndex && curRowSpan > 1) acc.squizeRowSpanCells.push(currentCell);
+			else if (curRowSpan > 1 && curRowIndex + curRowSpan - 1 > endingRowIndex) acc.moveToNextRowCells.push(currentCell);
+			return acc;
+		}, {
+			moveToNextRowCells: [],
+			squizeRowSpanCells: []
+		});
+		const nextRowIndex = deletingRowIndex + rowsDeleteNumber;
+		const nextRow = table.children[nextRowIndex];
+		if (nextRow === void 0 && deletingRowIndex === 0) {
+			tf.remove.table();
+			return;
+		}
+		if (nextRow) for (let index = 0; index < moveToNextRowCells.length; index++) {
+			const curRowCell = moveToNextRowCells[index];
+			const { col: curRowCellColIndex, row: curRowCellRowIndex } = getCellIndices(editor, curRowCell);
+			const curRowCellRowSpan = api.table.getRowSpan(curRowCell);
+			const startingCellIndex = nextRow.children.findIndex((curC) => {
+				const { col: curColIndex } = getCellIndices(editor, curC);
+				return curColIndex >= curRowCellColIndex;
+			});
+			if (startingCellIndex === -1) {
+				const startingCell$1 = nextRow.children.at(-1);
+				const startingCellPath$1 = editor.api.findPath(startingCell$1);
+				const tablePath$1 = startingCellPath$1.slice(0, -2);
+				const colPath$1 = startingCellPath$1.at(-1) + index + 1;
+				const nextRowStartCellPath$1 = [
+					...tablePath$1,
+					nextRowIndex,
+					colPath$1
+				];
+				const rowSpan$1 = curRowCellRowSpan - (endingRowIndex - curRowCellRowIndex + 1);
+				const newCell$1 = cloneDeep({
+					...curRowCell,
+					rowSpan: rowSpan$1
+				});
+				if (newCell$1.attributes?.rowspan) newCell$1.attributes.rowspan = rowSpan$1.toString();
+				editor.tf.insertNodes(newCell$1, { at: nextRowStartCellPath$1 });
+				continue;
+			}
+			const startingCell = nextRow.children[startingCellIndex];
+			const { col: startingColIndex } = getCellIndices(editor, startingCell);
+			let incrementBy = index;
+			if (startingColIndex < curRowCellColIndex) incrementBy += 1;
+			const startingCellPath = editor.api.findPath(startingCell);
+			const tablePath = startingCellPath.slice(0, -2);
+			const colPath = startingCellPath.at(-1);
+			const nextRowStartCellPath = [
+				...tablePath,
+				nextRowIndex,
+				colPath + incrementBy
+			];
+			const rowSpan = curRowCellRowSpan - (endingRowIndex - curRowCellRowIndex + 1);
+			const newCell = cloneDeep({
+				...curRowCell,
+				rowSpan
+			});
+			if (newCell.attributes?.rowspan) newCell.attributes.rowspan = rowSpan.toString();
+			editor.tf.insertNodes(newCell, { at: nextRowStartCellPath });
+		}
+		squizeRowSpanCells.forEach((cur) => {
+			const curRowCell = cur;
+			const { row: curRowCellRowIndex } = getCellIndices(editor, curRowCell);
+			const curRowCellRowSpan = api.table.getRowSpan(curRowCell);
+			const curCellPath = editor.api.findPath(curRowCell);
+			const rowSpan = curRowCellRowSpan - (Math.min(curRowCellRowIndex + curRowCellRowSpan - 1, endingRowIndex) - deletingRowIndex + 1);
+			const newCell = cloneDeep({
+				...curRowCell,
+				rowSpan
+			});
+			if (newCell.attributes?.rowspan) newCell.attributes.rowspan = rowSpan.toString();
+			editor.tf.setNodes(newCell, { at: curCellPath });
+		});
+		const rowToDelete = table.children[deletingRowIndex];
+		const rowPath = editor.api.findPath(rowToDelete);
+		Array.from({ length: rowsDeleteNumber }).forEach(() => {
+			editor.tf.removeNodes({ at: rowPath });
+		});
+	}
+};
+const getTableMergedColumnCount = (tableNode) => tableNode.children?.[0]?.children?.reduce((prev, cur) => prev + (getColSpan(cur) ?? 1), 0);
+const insertTableMergeColumn = (editor, { at, before, fromCell, header, select: shouldSelect } = {}) => {
+	const { api, getOptions, type } = getEditorPlugin(editor, BaseTablePlugin);
+	const { initialTableWidth, minColumnWidth } = getOptions();
+	if (at && !fromCell) {
+		if (NodeApi.get(editor, at)?.type === editor.getType(KEYS.table)) {
+			fromCell = NodeApi.lastChild(editor, at.concat([0]))[1];
+			at = void 0;
+		}
+	}
+	const cellEntry = fromCell ? editor.api.node({
+		at: fromCell,
+		match: { type: getCellTypes(editor) }
+	}) : editor.api.block({ match: { type: getCellTypes(editor) } });
+	if (!cellEntry) return;
+	const [, cellPath] = cellEntry;
+	const cell = cellEntry[0];
+	const tableEntry = editor.api.block({
+		above: true,
+		at: cellPath,
+		match: { type }
+	});
+	if (!tableEntry) return;
+	const [tableNode, tablePath] = tableEntry;
+	const { col: cellColIndex } = getCellIndices(editor, cell);
+	const cellColSpan = api.table.getColSpan(cell);
+	let nextColIndex;
+	let checkingColIndex;
+	if (PathApi.isPath(at)) {
+		nextColIndex = cellColIndex;
+		checkingColIndex = cellColIndex - 1;
+	} else {
+		nextColIndex = before ? cellColIndex : cellColIndex + cellColSpan;
+		checkingColIndex = before ? cellColIndex : cellColIndex + cellColSpan - 1;
+	}
+	const rowNumber = tableNode.children.length;
+	const firstCol = nextColIndex <= 0;
+	let placementCorrection = before ? 0 : 1;
+	if (firstCol) {
+		checkingColIndex = 0;
+		placementCorrection = 0;
+	}
+	const affectedCellsSet = /* @__PURE__ */ new Set();
+	Array.from({ length: rowNumber }, (_, i) => i).forEach((rI) => {
+		const found = findCellByIndexes(editor, tableNode, rI, checkingColIndex);
+		if (found) affectedCellsSet.add(found);
+	});
+	Array.from(affectedCellsSet).forEach((curCell) => {
+		const { col: curColIndex, row: curRowIndex } = getCellIndices(editor, curCell);
+		const curRowSpan = api.table.getRowSpan(curCell);
+		const curColSpan = api.table.getColSpan(curCell);
+		const currentCellPath = getCellPath(editor, tableEntry, curRowIndex, curColIndex);
+		if (curColIndex + curColSpan - 1 >= nextColIndex && !firstCol && !before) {
+			const colSpan = curColSpan + 1;
+			const newCell = cloneDeep({
+				...curCell,
+				colSpan
+			});
+			if (newCell.attributes?.colspan) newCell.attributes.colspan = colSpan.toString();
+			editor.tf.setNodes(newCell, { at: currentCellPath });
+		} else {
+			const curRowPath = currentCellPath.slice(0, -1);
+			const curColPath = currentCellPath.at(-1);
+			const placementPath = [...curRowPath, before ? curColPath : curColPath + placementCorrection];
+			const rowElement = editor.api.parent(currentCellPath)[0];
+			const emptyCell = {
+				...api.create.tableCell({
+					header,
+					row: rowElement
+				}),
+				colSpan: 1,
+				rowSpan: curRowSpan
+			};
+			editor.tf.insertNodes(emptyCell, {
+				at: placementPath,
+				select: shouldSelect
+			});
+		}
+	});
+	editor.tf.withoutNormalizing(() => {
+		const { colSizes } = tableNode;
+		if (colSizes) {
+			let newColSizes = [
+				...colSizes.slice(0, nextColIndex),
+				0,
+				...colSizes.slice(nextColIndex)
+			];
+			if (initialTableWidth) {
+				newColSizes[nextColIndex] = colSizes[nextColIndex] ?? colSizes[nextColIndex - 1] ?? initialTableWidth / colSizes.length;
+				const oldTotal = colSizes.reduce((a, b) => a + b, 0);
+				const newTotal = newColSizes.reduce((a, b) => a + b, 0);
+				const maxTotal = Math.max(oldTotal, initialTableWidth);
+				if (newTotal > maxTotal) {
+					const factor = maxTotal / newTotal;
+					newColSizes = newColSizes.map((size) => Math.max(minColumnWidth ?? 0, Math.floor(size * factor)));
+				}
+			}
+			editor.tf.setNodes({ colSizes: newColSizes }, { at: tablePath });
+		}
+	});
+};
+const insertTableMergeRow = (editor, { at, before, fromRow, header, select: shouldSelect } = {}) => {
+	const { api, type } = getEditorPlugin(editor, BaseTablePlugin);
+	if (at && !fromRow) {
+		if (NodeApi.get(editor, at)?.type === editor.getType(KEYS.table)) {
+			fromRow = NodeApi.lastChild(editor, at)[1];
+			at = void 0;
+		}
+	}
+	const trEntry = editor.api.block({
+		at: fromRow,
+		match: { type: editor.getType(KEYS.tr) }
+	});
+	if (!trEntry) return;
+	const [, trPath] = trEntry;
+	const tableEntry = editor.api.block({
+		above: true,
+		at: trPath,
+		match: { type }
+	});
+	if (!tableEntry) return;
+	const tableNode = tableEntry[0];
+	const cellEntry = editor.api.node({
+		at: fromRow,
+		match: { type: getCellTypes(editor) }
+	});
+	if (!cellEntry) return;
+	const [cellNode, cellPath] = cellEntry;
+	const cellElement = cellNode;
+	const cellRowSpan = api.table.getRowSpan(cellElement);
+	const { row: cellRowIndex } = getCellIndices(editor, cellElement);
+	const rowPath = cellPath.at(-2);
+	const tablePath = cellPath.slice(0, -2);
+	let nextRowIndex;
+	let checkingRowIndex;
+	let nextRowPath;
+	if (PathApi.isPath(at)) {
+		nextRowIndex = at.at(-1);
+		checkingRowIndex = cellRowIndex - 1;
+		nextRowPath = at;
+	} else {
+		nextRowIndex = before ? cellRowIndex : cellRowIndex + cellRowSpan;
+		checkingRowIndex = before ? cellRowIndex - 1 : cellRowIndex + cellRowSpan - 1;
+		nextRowPath = [...tablePath, before ? rowPath : rowPath + cellRowSpan];
+	}
+	const firstRow = nextRowIndex === 0;
+	if (firstRow) checkingRowIndex = 0;
+	const colCount = getTableColumnCount(tableNode);
+	const affectedCellsSet = /* @__PURE__ */ new Set();
+	Array.from({ length: colCount }, (_, i) => i).forEach((cI) => {
+		const found = findCellByIndexes(editor, tableNode, checkingRowIndex, cI);
+		if (found) affectedCellsSet.add(found);
+	});
+	const affectedCells = Array.from(affectedCellsSet);
+	const newRowChildren = [];
+	affectedCells.forEach((cur) => {
+		if (!cur) return;
+		const curCell = cur;
+		const { col: curColIndex, row: curRowIndex } = getCellIndices(editor, curCell);
+		const curRowSpan = api.table.getRowSpan(curCell);
+		const curColSpan = api.table.getColSpan(curCell);
+		const currentCellPath = getCellPath(editor, tableEntry, curRowIndex, curColIndex);
+		if (curRowIndex + curRowSpan - 1 >= nextRowIndex && !firstRow) {
+			const rowSpan = curRowSpan + 1;
+			const newCell = cloneDeep({
+				...curCell,
+				rowSpan
+			});
+			if (newCell.attributes?.rowspan) newCell.attributes.rowspan = rowSpan.toString();
+			editor.tf.setNodes(newCell, { at: currentCellPath });
+		} else {
+			const rowElement = editor.api.parent(currentCellPath)[0];
+			const emptyCell = api.create.tableCell({
+				header,
+				row: rowElement
+			});
+			newRowChildren.push({
+				...emptyCell,
+				colSpan: curColSpan,
+				rowSpan: 1
+			});
+		}
+	});
+	editor.tf.withoutNormalizing(() => {
+		editor.tf.insertNodes({
+			children: newRowChildren,
+			type: editor.getType(KEYS.tr)
+		}, {
+			at: nextRowPath,
+			select: false
+		});
+		if (shouldSelect) {
+			const cellEntry$1 = editor.api.node({
+				at: nextRowPath,
+				match: { type: getCellTypes(editor) }
+			});
+			if (cellEntry$1) {
+				const [, nextCellPath] = cellEntry$1;
+				editor.tf.select(nextCellPath);
+			}
+		}
+	});
+};
+/** Merges multiple selected cells into one. */
+const mergeTableCells = (editor) => {
+	const { api } = getEditorPlugin(editor, BaseTablePlugin);
+	const cellEntries = getTableGridAbove(editor, { format: "cell" });
+	editor.tf.withoutNormalizing(() => {
+		let colSpan = 0;
+		for (const entry of cellEntries) {
+			const [cell, path] = entry;
+			if (path.at(-2) === cellEntries[0][1].at(-2)) {
+				const cellColSpan = api.table.getColSpan(cell);
+				colSpan += cellColSpan;
+			}
+		}
+		let rowSpan = 0;
+		const { col } = getCellIndices(editor, cellEntries[0][0]);
+		cellEntries.forEach((entry) => {
+			const cell = entry[0];
+			const { col: curCol } = getCellIndices(editor, cell);
+			if (col === curCol) rowSpan += api.table.getRowSpan(cell);
+		});
+		const mergingCellChildren = [];
+		for (const cellEntry of cellEntries) {
+			const [el] = cellEntry;
+			const cellChildren = api.table.getCellChildren(el);
+			if (cellChildren.length !== 1 || !editor.api.isEmpty(cellChildren[0])) mergingCellChildren.push(...cloneDeep(cellChildren));
+		}
+		const cols = {};
+		cellEntries.forEach(([_entry, path]) => {
+			const rowIndex = path.at(-2);
+			if (cols[rowIndex]) cols[rowIndex].push(path);
+			else cols[rowIndex] = [path];
+		});
+		Object.values(cols).forEach((paths) => {
+			paths?.forEach(() => {
+				editor.tf.removeNodes({ at: paths[0] });
+			});
+		});
+		const mergedCell = {
+			...api.create.tableCell({
+				children: mergingCellChildren,
+				header: cellEntries[0][0].type === editor.getType(KEYS.th)
+			}),
+			colSpan,
+			rowSpan
+		};
+		editor.tf.insertNodes(mergedCell, { at: cellEntries[0][1] });
+	});
+	editor.tf.select(editor.api.end(cellEntries[0][1]));
+};
+const splitTableCell = (editor) => {
+	const { api } = getEditorPlugin(editor, BaseTablePlugin);
+	const tableRowType = editor.getType(KEYS.tr);
+	const [[cellElem, path]] = getTableGridAbove(editor, { format: "cell" });
+	editor.tf.withoutNormalizing(() => {
+		const createEmptyCell = (children) => ({
+			...api.create.tableCell({
+				children,
+				header: cellElem.type === editor.getType(KEYS.th)
+			}),
+			colSpan: 1,
+			rowSpan: 1
+		});
+		const tablePath = path.slice(0, -2);
+		const [rowPath, colPath] = path.slice(-2);
+		const colSpan = api.table.getColSpan(cellElem);
+		const rowSpan = api.table.getRowSpan(cellElem);
+		const colPaths = [];
+		for (let i = 0; i < colSpan; i++) colPaths.push(colPath + i);
+		const { col } = getCellIndices(editor, cellElem);
+		editor.tf.removeNodes({ at: path });
+		const getClosestColPathForRow = (row, targetCol) => {
+			const rowEntry = editor.api.node({
+				at: [...tablePath, row],
+				match: { type: tableRowType }
+			});
+			if (!rowEntry) return 0;
+			const rowEl = rowEntry[0];
+			let closestColPath = [];
+			let smallestDiff = Number.POSITIVE_INFINITY;
+			let isDirectionLeft = false;
+			rowEl.children.forEach((cell) => {
+				const cellElement = cell;
+				const { col: cellCol } = getCellIndices(editor, cellElement);
+				const diff = Math.abs(cellCol - targetCol);
+				if (diff < smallestDiff) {
+					smallestDiff = diff;
+					closestColPath = editor.api.findPath(cellElement);
+					isDirectionLeft = cellCol < targetCol;
+				}
+			});
+			if (closestColPath.length > 0) {
+				const lastIndex = closestColPath.at(-1);
+				if (isDirectionLeft) return lastIndex + 1;
+				return lastIndex;
+			}
+			return 1;
+		};
+		for (let i = 0; i < rowSpan; i++) {
+			const currentRowPath = rowPath + i;
+			const pathForNextRows = getClosestColPathForRow(currentRowPath, col);
+			const newRowChildren = [];
+			const _rowPath = [...tablePath, currentRowPath];
+			const rowEntry = editor.api.node({
+				at: _rowPath,
+				match: { type: tableRowType }
+			});
+			for (let j = 0; j < colPaths.length; j++) {
+				const cellChildren = api.table.getCellChildren(cellElem);
+				const cellToInsert = i === 0 && j === 0 ? createEmptyCell(cellChildren) : createEmptyCell();
+				if (rowEntry) {
+					const currentColPath = i === 0 ? colPaths[j] : pathForNextRows;
+					const pathForNewCell = [
+						...tablePath,
+						currentRowPath,
+						currentColPath
+					];
+					editor.tf.insertNodes(cellToInsert, { at: pathForNewCell });
+				} else newRowChildren.push(cellToInsert);
+			}
+			if (!rowEntry) editor.tf.insertNodes({
+				children: newRowChildren,
+				type: editor.getType(KEYS.tr)
+			}, { at: _rowPath });
+		}
+	});
+	editor.tf.select(editor.api.end(path));
+};
+const normalizeInitialValueTable = ({ editor, type }) => {
+	const tables = editor.api.nodes({
+		at: [],
+		match: { type }
+	});
+	for (const [table] of tables) computeCellIndices(editor, { tableNode: table });
+};
+const deleteColumn = (editor) => {
+	const { getOptions, type } = getEditorPlugin(editor, { key: KEYS.table });
+	const { disableMerge } = getOptions();
+	const tableEntry = editor.api.above({ match: { type } });
+	if (!tableEntry) return;
+	editor.tf.withoutNormalizing(() => {
+		if (!disableMerge) {
+			deleteTableMergeColumn(editor);
+			return;
+		}
+		if (editor.api.isExpanded()) return deleteColumnWhenExpanded(editor, tableEntry);
+		const tdEntry = editor.api.above({ match: { type: getCellTypes(editor) } });
+		const trEntry = editor.api.above({ match: { type: editor.getType(KEYS.tr) } });
+		if (tdEntry && trEntry && tableEntry && trEntry[0].children.length > 1) {
+			const [tableNode, tablePath] = tableEntry;
+			const tdPath = tdEntry[1];
+			const colIndex = tdPath.at(-1);
+			const pathToDelete = tdPath.slice();
+			const replacePathPos = pathToDelete.length - 2;
+			tableNode.children.forEach((row, rowIdx) => {
+				pathToDelete[replacePathPos] = rowIdx;
+				if (row.children.length === 1 || colIndex > row.children.length - 1) return;
+				editor.tf.removeNodes({ at: pathToDelete });
+			});
+			const { colSizes } = tableNode;
+			if (colSizes) {
+				const newColSizes = [...colSizes];
+				newColSizes.splice(colIndex, 1);
+				editor.tf.setNodes({ colSizes: newColSizes }, { at: tablePath });
+			}
+		}
+	});
+};
+const deleteRow = (editor) => {
+	const { getOptions, type } = getEditorPlugin(editor, { key: KEYS.table });
+	const { disableMerge } = getOptions();
+	if (!disableMerge) return deleteTableMergeRow(editor);
+	if (editor.api.some({ match: { type } })) {
+		const currentTableItem = editor.api.above({ match: { type } });
+		if (!currentTableItem) return;
+		if (editor.api.isExpanded()) return deleteRowWhenExpanded(editor, currentTableItem);
+		const currentRowItem = editor.api.above({ match: { type: editor.getType(KEYS.tr) } });
+		if (currentRowItem && currentTableItem && currentTableItem[0].children.length > 1) editor.tf.removeNodes({ at: currentRowItem[1] });
+	}
+};
+const deleteTable = (editor) => {
+	if (editor.api.some({ match: { type: editor.getType(KEYS.table) } })) {
+		const tableItem = editor.api.above({ match: { type: editor.getType(KEYS.table) } });
+		if (tableItem) editor.tf.removeNodes({ at: tableItem[1] });
+	}
+};
+/**
+* Insert table. If selection in table and no 'at' specified, insert after
+* current table. Select start of new table.
+*/
+const insertTable = (editor, { colCount = 2, header, rowCount = 2 } = {}, { select: shouldSelect, ...options } = {}) => {
+	const { api } = editor.getPlugin({ key: KEYS.table });
+	const type = editor.getType(KEYS.table);
+	editor.tf.withoutNormalizing(() => {
+		const newTable = api.create.table({
+			colCount,
+			header,
+			rowCount
+		});
+		if (!options.at) {
+			const currentTableEntry = editor.api.block({ match: { type } });
+			if (currentTableEntry) {
+				const [, tablePath] = currentTableEntry;
+				const insertPath = PathApi.next(tablePath);
+				editor.tf.insertNodes(newTable, {
+					at: insertPath,
+					...options
+				});
+				if (editor.selection) editor.tf.select(editor.api.start(insertPath));
+				return;
+			}
+		}
+		editor.tf.insertNodes(newTable, {
+			nextBlock: !options.at,
+			select: shouldSelect,
+			...options
+		});
+		if (shouldSelect) {
+			const tableEntry = editor.api.node({
+				at: options.at,
+				match: { type }
+			});
+			if (!tableEntry) return;
+			editor.tf.select(editor.api.start(tableEntry[1]));
+		}
+	});
+};
+const insertTableColumn = (editor, options = {}) => {
+	const { api, getOptions, type } = getEditorPlugin(editor, BaseTablePlugin);
+	const { disableMerge, initialTableWidth, minColumnWidth } = getOptions();
+	if (!disableMerge) return insertTableMergeColumn(editor, options);
+	const { before, header, select: shouldSelect } = options;
+	let { at, fromCell } = options;
+	if (at && !fromCell) {
+		if (NodeApi.get(editor, at)?.type === editor.getType(KEYS.table)) {
+			fromCell = NodeApi.lastChild(editor, at.concat([0]))[1];
+			at = void 0;
+		}
+	}
+	const cellEntry = editor.api.block({
+		at: fromCell,
+		match: { type: getCellTypes(editor) }
+	});
+	if (!cellEntry) return;
+	const [, cellPath] = cellEntry;
+	const tableEntry = editor.api.block({
+		above: true,
+		at: cellPath,
+		match: { type }
+	});
+	if (!tableEntry) return;
+	const [tableNode, tablePath] = tableEntry;
+	let nextCellPath;
+	let nextColIndex;
+	if (PathApi.isPath(at)) {
+		nextCellPath = at;
+		nextColIndex = at.at(-1);
+	} else {
+		nextCellPath = before ? cellPath : PathApi.next(cellPath);
+		nextColIndex = before ? cellPath.at(-1) : cellPath.at(-1) + 1;
+	}
+	const currentRowIndex = cellPath.at(-2);
+	editor.tf.withoutNormalizing(() => {
+		tableNode.children.forEach((row, rowIndex) => {
+			const insertCellPath = [...nextCellPath];
+			if (PathApi.isPath(at)) insertCellPath[at.length - 2] = rowIndex;
+			else insertCellPath[cellPath.length - 2] = rowIndex;
+			const isHeaderRow = header === void 0 ? row.children.every((c) => c.type === editor.getType(KEYS.th)) : header;
+			editor.tf.insertNodes(api.create.tableCell({ header: isHeaderRow }), {
+				at: insertCellPath,
+				select: shouldSelect && rowIndex === currentRowIndex
+			});
+		});
+		const { colSizes } = tableNode;
+		if (colSizes) {
+			let newColSizes = [
+				...colSizes.slice(0, nextColIndex),
+				0,
+				...colSizes.slice(nextColIndex)
+			];
+			if (initialTableWidth) {
+				newColSizes[nextColIndex] = colSizes[nextColIndex] ?? colSizes[nextColIndex - 1] ?? initialTableWidth / colSizes.length;
+				const oldTotal = colSizes.reduce((a, b) => a + b, 0);
+				const newTotal = newColSizes.reduce((a, b) => a + b, 0);
+				const maxTotal = Math.max(oldTotal, initialTableWidth);
+				if (newTotal > maxTotal) {
+					const factor = maxTotal / newTotal;
+					newColSizes = newColSizes.map((size) => Math.max(minColumnWidth ?? 0, Math.floor(size * factor)));
+				}
+			}
+			editor.tf.setNodes({ colSizes: newColSizes }, { at: tablePath });
+		}
+	});
+};
+const insertTableRow = (editor, options = {}) => {
+	const { api, getOptions, type } = getEditorPlugin(editor, BaseTablePlugin);
+	const { disableMerge } = getOptions();
+	if (!disableMerge) return insertTableMergeRow(editor, options);
+	const { before, header, select: shouldSelect } = options;
+	let { at, fromRow } = options;
+	if (at && !fromRow) {
+		if (NodeApi.get(editor, at)?.type === editor.getType(KEYS.table)) {
+			fromRow = NodeApi.lastChild(editor, at)[1];
+			at = void 0;
+		}
+	}
+	const trEntry = editor.api.block({
+		at: fromRow,
+		match: { type: editor.getType(KEYS.tr) }
+	});
+	if (!trEntry) return;
+	const [trNode, trPath] = trEntry;
+	const tableEntry = editor.api.block({
+		above: true,
+		at: trPath,
+		match: { type }
+	});
+	if (!tableEntry) return;
+	const getEmptyRowNode$1 = () => ({
+		children: trNode.children.map((_, i) => {
+			const isHeaderColumn = !(tableEntry[0].children.length === 1) && tableEntry[0].children.every((n) => n.children[i].type === editor.getType(KEYS.th));
+			return api.create.tableCell({ header: header ?? isHeaderColumn });
+		}),
+		type: editor.getType(KEYS.tr)
+	});
+	editor.tf.withoutNormalizing(() => {
+		editor.tf.insertNodes(getEmptyRowNode$1(), { at: PathApi.isPath(at) ? at : before ? trPath : PathApi.next(trPath) });
+	});
+	if (shouldSelect) {
+		const cellEntry = editor.api.block({ match: { type: getCellTypes(editor) } });
+		if (!cellEntry) return;
+		const [, nextCellPath] = cellEntry;
+		if (PathApi.isPath(at)) nextCellPath[nextCellPath.length - 2] = at.at(-2);
+		else nextCellPath[nextCellPath.length - 2] = before ? nextCellPath.at(-2) : nextCellPath.at(-2) + 1;
+		editor.tf.select(nextCellPath);
+	}
+};
+/** Move selection by cell unit. */
+const moveSelectionFromCell = (editor, { at, edge, fromOneCell, reverse } = {}) => {
+	if (edge) {
+		const cellEntries = getTableGridAbove(editor, {
+			at,
+			format: "cell"
+		});
+		const minCell = fromOneCell ? 0 : 1;
+		if (cellEntries.length > minCell) {
+			const [, firstCellPath] = cellEntries[0];
+			const [, lastCellPath] = cellEntries.at(-1);
+			const anchorPath = [...firstCellPath];
+			const focusPath = [...lastCellPath];
+			switch (edge) {
+				case "bottom":
+					focusPath[focusPath.length - 2] += 1;
+					break;
+				case "left":
+					anchorPath[anchorPath.length - 1] -= 1;
+					break;
+				case "right":
+					focusPath[focusPath.length - 1] += 1;
+					break;
+				case "top":
+					anchorPath[anchorPath.length - 2] -= 1;
+					break;
+			}
+			if (NodeApi.has(editor, anchorPath) && NodeApi.has(editor, focusPath)) editor.tf.select({
+				anchor: editor.api.start(anchorPath),
+				focus: editor.api.start(focusPath)
+			});
+			return true;
+		}
+		return;
+	}
+	const cellEntry = editor.api.block({
+		at,
+		match: { type: getCellTypes(editor) }
+	});
+	if (cellEntry) {
+		const [, cellPath] = cellEntry;
+		const nextCellPath = [...cellPath];
+		const offset = reverse ? -1 : 1;
+		nextCellPath[nextCellPath.length - 2] += offset;
+		if (NodeApi.has(editor, nextCellPath)) editor.tf.select(editor.api.start(nextCellPath));
+		else {
+			const tablePath = cellPath.slice(0, -2);
+			if (reverse) editor.tf.withoutNormalizing(() => {
+				editor.tf.select(editor.api.start(tablePath));
+				editor.tf.move({ reverse: true });
+			});
+			else editor.tf.withoutNormalizing(() => {
+				editor.tf.select(editor.api.end(tablePath));
+				editor.tf.move();
+			});
+		}
+		return true;
+	}
+};
+/**
+* Override the new selection if the previous selection and the new one are in
+* different cells.
+*/
+const overrideSelectionFromCell = (editor, newSelection) => {
+	let hotkey;
+	if (!editor.dom.currentKeyboardEvent || ![
+		"up",
+		"down",
+		"shift+up",
+		"shift+right",
+		"shift+down",
+		"shift+left"
+	].some((key) => {
+		const valid = isHotkey(key, editor.dom.currentKeyboardEvent);
+		if (valid) hotkey = key;
+		return valid;
+	}) || !editor.selection?.focus || !newSelection?.focus || !editor.api.isAt({
+		at: {
+			anchor: editor.selection.focus,
+			focus: newSelection.focus
+		},
+		blocks: true,
+		match: { type: getCellTypes(editor) }
+	})) return;
+	if (!hotkey) return;
+	const edge = KEY_SHIFT_EDGES[hotkey];
+	if (edge && !editor.api.isAt({
+		block: true,
+		match: { type: getCellTypes(editor) }
+	})) return;
+	const prevSelection = editor.selection;
+	const reverse = ["shift+up", "up"].includes(hotkey);
+	setTimeout(() => {
+		moveSelectionFromCell(editor, {
+			at: prevSelection,
+			edge,
+			fromOneCell: true,
+			reverse
+		});
+	}, 0);
+};
+/**
+* Selection table:
+*
+* - If anchor is in table, focus in a block before: set focus to start of table
+* - If anchor is in table, focus in a block after: set focus to end of table
+* - If focus is in table, anchor in a block before: set focus to end of table
+* - If focus is in table, anchor in a block after: set focus to the point before
+*   start of table
+*/
+const withApplyTable = ({ api: _api, editor, getOptions, tf: { apply }, type: tableType }) => ({ transforms: { apply(op) {
+	if (op.type === "set_selection" && op.newProperties) {
+		const newSelection = {
+			...editor.selection,
+			...op.newProperties
+		};
+		if (RangeApi.isRange(newSelection) && editor.api.isAt({
+			at: newSelection,
+			blocks: true,
+			match: (n) => n.type === tableType
+		})) {
+			const anchorEntry = editor.api.block({
+				at: newSelection.anchor,
+				match: (n) => n.type === tableType
+			});
+			if (anchorEntry) {
+				const [, anchorPath] = anchorEntry;
+				if (RangeApi.isBackward(newSelection)) op.newProperties.focus = editor.api.start(anchorPath);
+				else if (editor.api.before(anchorPath)) op.newProperties.focus = editor.api.end(anchorPath);
+			} else {
+				const focusEntry = editor.api.block({
+					at: newSelection.focus,
+					match: (n) => n.type === tableType
+				});
+				if (focusEntry) {
+					const [, focusPath] = focusEntry;
+					if (RangeApi.isBackward(newSelection)) {
+						const startPoint = editor.api.start(focusPath);
+						const pointBefore = editor.api.before(startPoint);
+						op.newProperties.focus = pointBefore ?? startPoint;
+					} else op.newProperties.focus = editor.api.end(focusPath);
+				}
+			}
+		}
+		overrideSelectionFromCell(editor, newSelection);
+	}
+	const opType = op.type === "remove_node" ? op.node.type : op.type === "move_node" ? editor.api.node(op.path)?.[0].type : void 0;
+	const isTableOperation = (op.type === "remove_node" || op.type === "move_node") && opType && [
+		editor.getType(KEYS.tr),
+		tableType,
+		...getCellTypes(editor)
+	].includes(opType);
+	if (isTableOperation && op.type === "remove_node") {
+		const cells = [...editor.api.nodes({
+			at: op.path,
+			match: { type: getCellTypes(editor) }
+		})];
+		const cellIndices = getOptions()._cellIndices;
+		cells.forEach(([cell]) => {
+			delete cellIndices[cell.id];
+		});
+	}
+	apply(op);
+	let table;
+	if (isTableOperation && opType !== tableType) {
+		table = editor.api.node({
+			at: op.type === "move_node" ? op.newPath : op.path,
+			match: { type: tableType }
+		})?.[0];
+		if (table) computeCellIndices(editor, { tableNode: table });
+	}
+} } });
+/** Prevent cell deletion. */
+const withDeleteTable = ({ editor, tf: { deleteFragment }, type }) => ({ transforms: { deleteFragment(direction) {
+	if (editor.api.isAt({
+		block: true,
+		match: (n) => n.type === type
+	})) {
+		const cellEntries = getTableGridAbove(editor, { format: "cell" });
+		if (cellEntries.length > 1) {
+			editor.tf.withoutNormalizing(() => {
+				cellEntries.forEach(([, cellPath]) => {
+					editor.tf.replaceNodes(editor.api.create.block(), {
+						at: cellPath,
+						children: true
+					});
+				});
+				editor.tf.select({
+					anchor: editor.api.start(cellEntries[0][1]),
+					focus: editor.api.end(cellEntries.at(-1)[1])
+				});
+			});
+			return;
+		}
+	}
+	deleteFragment(direction);
+} } });
+/** If selection is in a table, get subtable above. */
+const withGetFragmentTable = ({ api, api: { getFragment }, editor, type }) => ({ api: { getFragment() {
+	const fragment = getFragment();
+	const newFragment = [];
+	fragment.forEach((node) => {
+		if (node.type === type) {
+			const rows = node.children;
+			const rowCount = rows.length;
+			if (!rowCount) return;
+			const colCount = rows[0].children.length;
+			if (rowCount <= 1 && colCount <= 1) {
+				const cell = rows[0];
+				const cellChildren = api.table.getCellChildren(cell);
+				newFragment.push(...cellChildren[0].children);
+				return;
+			}
+			const subTable = getTableGridAbove(editor);
+			if (subTable.length > 0) {
+				newFragment.push(subTable[0][0]);
+				return;
+			}
+		}
+		newFragment.push(node);
+	});
+	return newFragment;
+} } });
+/**
+* If inserting a table, If block above anchor is a table,
+*
+* - Replace each cell above by the inserted table until out of bounds.
+* - Select the inserted cells.
+*/
+const withInsertFragmentTable = ({ api, editor, getOptions, tf: { insert, insertFragment }, type }) => ({ transforms: { insertFragment(fragment) {
+	const insertedTable = fragment.find((n) => n.type === type);
+	if (!insertedTable) {
+		if (getTableAbove(editor, { at: editor.selection?.anchor })) {
+			const cellEntries = getTableGridAbove(editor, { format: "cell" });
+			if (cellEntries.length > 1) {
+				cellEntries.forEach((cellEntry) => {
+					if (cellEntry) {
+						const [, cellPath] = cellEntry;
+						editor.tf.replaceNodes(cloneDeep(fragment), {
+							at: cellPath,
+							children: true
+						});
+					}
+				});
+				editor.tf.select({
+					anchor: editor.api.start(cellEntries[0][1]),
+					focus: editor.api.end(cellEntries.at(-1)[1])
+				});
+				return;
+			}
+		}
+	}
+	if (insertedTable) {
+		if (getTableAbove(editor, { at: editor.selection?.anchor })) {
+			const [cellEntry] = getTableGridAbove(editor, {
+				at: editor.selection?.anchor,
+				format: "cell"
+			});
+			if (cellEntry) {
+				editor.tf.withoutNormalizing(() => {
+					const [, startCellPath] = cellEntry;
+					const cellPath = [...startCellPath];
+					const startColIndex = cellPath.at(-1);
+					let lastCellPath = null;
+					let initRow = true;
+					insertedTable.children.forEach((row) => {
+						cellPath[cellPath.length - 1] = startColIndex;
+						if (!initRow) {
+							const fromRow = cellPath.slice(0, -1);
+							cellPath[cellPath.length - 2] += 1;
+							if (!NodeApi.has(editor, cellPath)) {
+								if (getOptions().disableExpandOnInsert) return;
+								insert.tableRow({ fromRow });
+							}
+						}
+						initRow = false;
+						const insertedCells = row.children;
+						let initCell = true;
+						insertedCells.forEach((cell) => {
+							if (!initCell) {
+								const fromCell = [...cellPath];
+								cellPath[cellPath.length - 1] += 1;
+								if (!NodeApi.has(editor, cellPath)) {
+									if (getOptions().disableExpandOnInsert) return;
+									insert.tableColumn({ fromCell });
+								}
+							}
+							initCell = false;
+							const cellChildren = api.table.getCellChildren(cell);
+							editor.tf.replaceNodes(cloneDeep(cellChildren), {
+								at: cellPath,
+								children: true
+							});
+							lastCellPath = [...cellPath];
+						});
+					});
+					if (lastCellPath) editor.tf.select({
+						anchor: editor.api.start(startCellPath),
+						focus: editor.api.end(lastCellPath)
+					});
+				});
+				return;
+			}
+		} else if (fragment.length === 1 && fragment[0].type === KEYS.table) {
+			editor.tf.insertNodes(fragment[0]);
+			return;
+		}
+	}
+	insertFragment(fragment);
+} } });
+const withInsertTextTable = ({ editor, tf: { insertText } }) => ({ transforms: { insertText(text, options) {
+	if (editor.api.isExpanded()) {
+		if (getTableAbove(editor, { at: editor.selection?.anchor })) {
+			if (getTableGridAbove(editor, { format: "cell" }).length > 1) editor.tf.collapse({ edge: "focus" });
+		}
+	}
+	insertText(text, options);
+} } });
+/**
+* Normalize table:
+*
+* - Wrap cell children in a paragraph if they are texts.
+*/
+const withNormalizeTable = ({ editor, getOption, getOptions, tf: { normalizeNode }, type }) => ({ transforms: { normalizeNode([n, path]) {
+	const { enableUnsetSingleColSize, initialTableWidth } = getOptions();
+	if (ElementApi.isElement(n)) {
+		if (n.type === type) {
+			const node = n;
+			if (!node.children.some((child) => ElementApi.isElement(child) && child.type === editor.getType(KEYS.tr))) {
+				editor.tf.removeNodes({ at: path });
+				return;
+			}
+			if (node.colSizes && node.colSizes.length > 0 && enableUnsetSingleColSize && getTableColumnCount(node) < 2) {
+				editor.tf.unsetNodes("colSizes", { at: path });
+				return;
+			}
+			if (editor.api.block({
+				above: true,
+				at: path,
+				match: { type }
+			})) {
+				editor.tf.unwrapNodes({ at: path });
+				return;
+			}
+			if (initialTableWidth) {
+				const tableNode = node;
+				const colCount = tableNode.children[0]?.children?.length;
+				if (colCount) {
+					const colSizes = [];
+					if (!tableNode.colSizes) for (let i = 0; i < colCount; i++) colSizes.push(initialTableWidth / colCount);
+					else if (tableNode.colSizes.some((size) => !size)) tableNode.colSizes.forEach((colSize) => {
+						colSizes.push(colSize || initialTableWidth / colCount);
+					});
+					if (colSizes.length > 0) {
+						editor.tf.setNodes({ colSizes }, { at: path });
+						return;
+					}
+				}
+			}
+		}
+		if (n.type === editor.getType(KEYS.tr)) {
+			if (editor.api.parent(path)?.[0].type !== type) {
+				editor.tf.unwrapNodes({ at: path });
+				return;
+			}
+		}
+		if (getCellTypes(editor).includes(n.type)) {
+			const node = n;
+			const cellIndices = getOption("cellIndices", node.id);
+			if (node.id && !cellIndices) computeCellIndices(editor, {
+				all: true,
+				cellNode: node
+			});
+			const { children } = node;
+			if (editor.api.parent(path)?.[0].type !== editor.getType(KEYS.tr)) {
+				editor.tf.unwrapNodes({ at: path });
+				return;
+			}
+			if (TextApi.isText(children[0])) {
+				editor.tf.wrapNodes(editor.api.create.block({}, path), {
+					at: path,
+					children: true
+				});
+				return;
+			}
+		}
+	}
+	normalizeNode([n, path]);
+} } });
+const withSetFragmentDataTable = ({ api, editor, plugin, tf: { setFragmentData } }) => ({ transforms: { setFragmentData(data, originEvent) {
+	const tableEntry = getTableGridAbove(editor, { format: "table" })?.[0];
+	const selectedCellEntries = getTableGridAbove(editor, { format: "cell" });
+	const initialSelection = editor.selection;
+	if (!tableEntry || !initialSelection) {
+		setFragmentData(data, originEvent);
+		return;
+	}
+	const [tableNode, tablePath] = tableEntry;
+	const tableRows = tableNode.children;
+	tableNode.children = tableNode.children.filter((v) => v.children.length > 0);
+	let textCsv = "";
+	let textTsv = "";
+	const divElement = document.createElement("div");
+	const tableElement = document.createElement("table");
+	/**
+	* Cover single cell copy | cut operation. In this case, copy cell content
+	* instead of table structure.
+	*/
+	if (tableEntry && initialSelection && selectedCellEntries.length === 1 && (originEvent === "copy" || originEvent === "cut")) {
+		setFragmentData(data);
+		return;
+	}
+	editor.tf.withoutNormalizing(() => {
+		tableRows.forEach((row) => {
+			const rowCells = row.children;
+			const cellStrings = [];
+			const rowElement = row.type === editor.getType(KEYS.th) ? document.createElement("th") : document.createElement("tr");
+			rowCells.forEach((cell) => {
+				data.clearData();
+				const cellPath = editor.api.findPath(cell);
+				editor.tf.select({
+					anchor: editor.api.start(cellPath),
+					focus: editor.api.end(cellPath)
+				});
+				setFragmentData(data);
+				cellStrings.push(data.getData("text/plain"));
+				const cellElement = document.createElement("td");
+				cellElement.colSpan = api.table.getColSpan(cell);
+				cellElement.rowSpan = api.table.getRowSpan(cell);
+				cellElement.innerHTML = data.getData("text/html");
+				rowElement.append(cellElement);
+			});
+			tableElement.append(rowElement);
+			textCsv += `${cellStrings.join(",")}\n`;
+			textTsv += `${cellStrings.join("	")}\n`;
+		});
+		const _tableEntry = editor.api.node({
+			at: tablePath,
+			match: { type: KEYS.table }
+		});
+		if (_tableEntry != null && _tableEntry.length > 0) {
+			const realTable = _tableEntry[0];
+			if (realTable.attributes != null) Object.entries(realTable.attributes).forEach(([key, value]) => {
+				if (value != null && plugin.node.dangerouslyAllowAttributes?.includes(key)) tableElement.setAttribute(key, String(value));
+			});
+		}
+		editor.tf.select(initialSelection);
+		divElement.append(tableElement);
+	});
+	data.setData("text/csv", textCsv);
+	data.setData("text/tsv", textTsv);
+	data.setData("text/plain", textTsv);
+	data.setData("text/html", divElement.innerHTML);
+	const selectedFragmentStr = JSON.stringify([tableNode]);
+	const encodedFragment = window.btoa(encodeURIComponent(selectedFragmentStr));
+	data.setData("application/x-slate-fragment", encodedFragment);
+} } });
+const withTableCellSelection = ({ api: { marks }, editor, tf: { addMark, removeMark, setNodes } }) => {
+	return {
+		api: { marks() {
+			const apply = () => {
+				const { selection } = editor;
+				if (!selection || editor.api.isCollapsed()) return;
+				const matchesCell = getTableGridAbove(editor, { format: "cell" });
+				if (matchesCell.length <= 1) return;
+				const markCounts = {};
+				const totalMarks = {};
+				let totalNodes = 0;
+				matchesCell.forEach(([_cell, cellPath]) => {
+					const textNodeEntry = editor.api.nodes({
+						at: cellPath,
+						match: (n) => TextApi.isText(n)
+					});
+					Array.from(textNodeEntry, (item) => item[0]).forEach((item) => {
+						totalNodes++;
+						const keys = Object.keys(item);
+						if (keys.length === 1) return;
+						keys.splice(keys.indexOf("text"), 1);
+						keys.forEach((k) => {
+							markCounts[k] = (markCounts[k] || 0) + 1;
+							totalMarks[k] = item[k];
+						});
+					});
+				});
+				Object.keys(markCounts).forEach((mark) => {
+					if (markCounts[mark] !== totalNodes) delete totalMarks[mark];
+				});
+				return totalMarks;
+			};
+			const result = apply();
+			if (result) return result;
+			return marks();
+		} },
+		transforms: {
+			addMark(key, value) {
+				const apply = () => {
+					const { selection } = editor;
+					if (!selection || editor.api.isCollapsed() || editor.meta.isNormalizing) return;
+					const matchesCell = getTableGridAbove(editor, { format: "cell" });
+					if (matchesCell.length <= 1) return;
+					matchesCell.forEach(([_cell, cellPath]) => {
+						editor.tf.setNodes({ [key]: value }, {
+							at: cellPath,
+							split: true,
+							voids: true,
+							match: (n) => TextApi.isText(n)
+						});
+					});
+					return true;
+				};
+				if (apply()) return;
+				return addMark(key, value);
+			},
+			removeMark(key) {
+				const apply = () => {
+					const { selection } = editor;
+					if (!selection || editor.api.isCollapsed() || editor.meta.isNormalizing) return;
+					const matchesCell = getTableGridAbove(editor, { format: "cell" });
+					if (matchesCell.length <= 1) return;
+					matchesCell.forEach(([_cell, cellPath]) => {
+						editor.tf.setNodes({ [key]: null }, {
+							at: cellPath,
+							split: true,
+							voids: true,
+							match: (n) => TextApi.isText(n)
+						});
+					});
+					return true;
+				};
+				if (apply()) return;
+				return removeMark(key);
+			},
+			setNodes(props, options) {
+				const apply = () => {
+					const { selection } = editor;
+					if (!selection || editor.api.isCollapsed() || editor.meta.isNormalizing) return;
+					if (options?.at) {
+						const range = editor.api.range(options.at);
+						if (range && !RangeApi.includes(selection, range)) return;
+					}
+					const matchesCell = getTableGridAbove(editor, { format: "cell" });
+					if (matchesCell.length <= 1) return;
+					setNodes(props, {
+						...options,
+						match: combineTransformMatchOptions(editor, (_, p) => matchesCell.some(([_$1, cellPath]) => PathApi.isCommon(cellPath, p)), options)
+					});
+					return true;
+				};
+				if (apply()) return;
+				return setNodes(props, options);
+			}
+		}
+	};
+};
+const withTable = (ctx) => {
+	const { editor, tf: { selectAll, tab }, type } = ctx;
+	const cellSelection = withTableCellSelection(ctx);
+	return {
+		api: {
+			...withGetFragmentTable(ctx).api,
+			...cellSelection.api
+		},
+		transforms: {
+			selectAll: () => {
+				const apply = () => {
+					const table = editor.api.above({ match: { type } });
+					if (!table) return;
+					const [, tablePath] = table;
+					editor.tf.select(tablePath);
+					return true;
+				};
+				if (apply()) return true;
+				return selectAll();
+			},
+			tab: (options) => {
+				const apply = () => {
+					if (editor.selection && editor.api.isExpanded()) {
+						if (Array.from(editor.api.nodes({
+							at: editor.selection,
+							match: { type: getCellTypes(editor) }
+						})).length > 1) {
+							editor.tf.collapse({ edge: "end" });
+							return true;
+						}
+					}
+					const entries = getTableEntries(editor);
+					if (!entries) return;
+					const { cell, row } = entries;
+					const [, cellPath] = cell;
+					if (options.reverse) {
+						const previousCell = getPreviousTableCell(editor, cell, cellPath, row);
+						if (previousCell) {
+							const [, previousCellPath] = previousCell;
+							editor.tf.select(previousCellPath);
+						}
+					} else {
+						const nextCell = getNextTableCell(editor, cell, cellPath, row);
+						if (nextCell) {
+							const [, nextCellPath] = nextCell;
+							editor.tf.select(nextCellPath);
+						}
+					}
+					return true;
+				};
+				if (apply()) return true;
+				return tab(options);
+			},
+			...withNormalizeTable(ctx).transforms,
+			...withDeleteTable(ctx).transforms,
+			...withInsertFragmentTable(ctx).transforms,
+			...withInsertTextTable(ctx).transforms,
+			...withApplyTable(ctx).transforms,
+			...withSetFragmentDataTable(ctx).transforms,
+			...cellSelection.transforms
+		}
+	};
+};
+const parse = ({ element, type }) => {
+	const background = element.style.background || element.style.backgroundColor;
+	if (background) return {
+		background,
+		type
+	};
+	return { type };
+};
+const BaseTableRowPlugin = createSlatePlugin({
+	key: KEYS.tr,
+	node: {
+		isContainer: true,
+		isElement: true,
+		isStrictSiblings: true
+	},
+	parsers: { html: { deserializer: { rules: [{ validNodeName: "TR" }] } } }
+});
+const BaseTableCellPlugin = createSlatePlugin({
+	key: KEYS.td,
+	node: {
+		dangerouslyAllowAttributes: ["colspan", "rowspan"],
+		isContainer: true,
+		isElement: true,
+		isStrictSiblings: true,
+		props: ({ element }) => ({
+			colSpan: element?.attributes?.colspan,
+			rowSpan: element?.attributes?.rowspan
+		})
+	},
+	parsers: { html: { deserializer: {
+		attributeNames: ["rowspan", "colspan"],
+		parse,
+		rules: [{ validNodeName: "TD" }]
+	} } },
+	rules: { merge: { removeEmpty: false } }
+});
+const BaseTableCellHeaderPlugin = createSlatePlugin({
+	key: KEYS.th,
+	node: {
+		dangerouslyAllowAttributes: ["colspan", "rowspan"],
+		isContainer: true,
+		isElement: true,
+		isStrictSiblings: true,
+		props: ({ element }) => ({
+			colSpan: element?.attributes?.colspan,
+			rowSpan: element?.attributes?.rowspan
+		})
+	},
+	parsers: { html: { deserializer: {
+		attributeNames: ["rowspan", "colspan"],
+		parse,
+		rules: [{ validNodeName: "TH" }]
+	} } },
+	rules: { merge: { removeEmpty: false } }
+});
+/** Enables support for tables. */
+const BaseTablePlugin = createTSlatePlugin({
+	key: KEYS.table,
+	node: {
+		isContainer: true,
+		isElement: true
+	},
+	normalizeInitialValue: normalizeInitialValueTable,
+	options: {
+		_cellIndices: {},
+		disableMerge: false,
+		minColumnWidth: 48,
+		selectedCells: null,
+		selectedTables: null
+	},
+	parsers: { html: { deserializer: { rules: [{ validNodeName: "TABLE" }] } } },
+	plugins: [
+		BaseTableRowPlugin,
+		BaseTableCellPlugin,
+		BaseTableCellHeaderPlugin
+	]
+}).extendSelectors(({ getOptions }) => ({ cellIndices: (id) => getOptions()._cellIndices[id] })).extendEditorApi(({ editor }) => ({
+	create: {
+		table: bindFirst(getEmptyTableNode, editor),
+		tableCell: bindFirst(getEmptyCellNode, editor),
+		tableRow: bindFirst(getEmptyRowNode, editor)
+	},
+	table: {
+		getCellBorders: bindFirst(getTableCellBorders, editor),
+		getCellSize: bindFirst(getTableCellSize, editor),
+		getColSpan,
+		getRowSpan,
+		getCellChildren: (cell) => cell.children
+	}
+})).extendEditorTransforms(({ editor }) => ({
+	insert: {
+		table: bindFirst(insertTable, editor),
+		tableColumn: bindFirst(insertTableColumn, editor),
+		tableRow: bindFirst(insertTableRow, editor)
+	},
+	remove: {
+		table: bindFirst(deleteTable, editor),
+		tableColumn: bindFirst(deleteColumn, editor),
+		tableRow: bindFirst(deleteRow, editor)
+	},
+	table: {
+		merge: bindFirst(mergeTableCells, editor),
+		split: bindFirst(splitTableCell, editor)
+	}
+})).overrideEditor(withTable);
+const KEY_SHIFT_EDGES = {
+	"shift+down": "bottom",
+	"shift+left": "left",
+	"shift+right": "right",
+	"shift+up": "top"
+};
+
+//#endregion
+//#region src/lib/utils/getMarkdown.ts
+/**
+* Serialize table cell content to markdown string. Multiple paragraphs are
+* joined with <br/>.
+*/
+const serializeCellContent = (editor, cell) => {
+	const parts = [];
+	for (const child of cell.children) {
+		const md = serializeMd(editor, { value: [child] }).trim();
+		if (md) parts.push(md);
+	}
+	return parts.join("<br/>");
+};
+/**
+* Serialize a table with selected cells replaced by <CellRef /> placeholders.
+* Returns the table markdown and a map of cell IDs to their cells.
+*/
+const serializeTableWithCellRefs = (editor, table, selectedCellIds) => {
+	const rows = [];
+	const selectedCells = [];
+	let headerSeparator = "";
+	for (let rowIdx = 0; rowIdx < table.children.length; rowIdx++) {
+		const row = table.children[rowIdx];
+		const cellTexts = [];
+		for (const cell of row.children) {
+			const cellId = cell.id;
+			if (cellId && selectedCellIds.has(cellId)) {
+				cellTexts.push(`<CellRef id="${cellId}" />`);
+				selectedCells.push({
+					cell,
+					id: cellId
+				});
+			} else {
+				const content = serializeCellContent(editor, cell);
+				cellTexts.push(content);
+			}
+		}
+		rows.push(`| ${cellTexts.join(" | ")} |`);
+		if (rowIdx === 0) headerSeparator = `| ${cellTexts.map(() => "---").join(" | ")} |`;
+	}
+	if (rows.length > 0 && headerSeparator) rows.splice(1, 0, headerSeparator);
+	return {
+		selectedCells,
+		tableMarkdown: `${rows.join("\n")}\n`
+	};
+};
+/**
+* Serialize cell contents as separate Cell blocks. Each cell's content can
+* contain multiple blocks (paragraphs, lists, etc.) since it's outside the
+* table markdown structure.
+*/
+const serializeCellBlocks = (editor, cells) => {
+	const blocks = [];
+	for (const { cell, id } of cells) {
+		const content = serializeMd(editor, { value: cell.children }).trim();
+		blocks.push(`<Cell id="${id}">\n${content}\n</Cell>`);
+	}
+	return blocks.join("\n\n");
+};
+const getMarkdown = (editor, { type }) => {
+	if (type === "editor" || type === "editorWithBlockId") return serializeMd(editor, { withBlockId: type === "editorWithBlockId" });
+	if (type === "block" || type === "blockWithBlockId") return serializeMd(editor, {
+		value: editor.api.blocks({ mode: "lowest" }).map(([node]) => node),
+		withBlockId: type === "blockWithBlockId"
+	});
+	if (type === "blockSelection" || type === "blockSelectionWithBlockId") {
+		const fragment = editor.api.fragment();
+		if (fragment.length === 1) return serializeMd(editor, {
+			value: [{
+				children: fragment[0].children,
+				type: KEYS.p
+			}],
+			withBlockId: type === "blockSelectionWithBlockId"
+		});
+		return serializeMd(editor, {
+			value: fragment,
+			withBlockId: type === "blockSelectionWithBlockId"
+		});
+	}
+	if (type === "tableCellWithId") {
+		const cellEntries = getTableGridAbove(editor, { format: "cell" });
+		if (cellEntries.length === 0) return "";
+		const selectedCellIds = /* @__PURE__ */ new Set();
+		for (const [cell] of cellEntries) {
+			const cellId = cell.id;
+			if (cellId) selectedCellIds.add(cellId);
+		}
+		const tableEntry = editor.api.block({
+			at: editor.selection,
+			match: { type: KEYS.table }
+		});
+		if (!tableEntry) return "";
+		const table = tableEntry[0];
+		const { selectedCells, tableMarkdown } = serializeTableWithCellRefs(editor, table, selectedCellIds);
+		return `${tableMarkdown}\n${serializeCellBlocks(editor, selectedCells)}`;
+	}
+	return "";
+};
+
+//#endregion
+//#region src/lib/utils/replacePlaceholders.ts
+const replacePlaceholders = (editor, text, { prompt } = {}) => {
+	let result = text.replace("{prompt}", prompt || "");
+	Object.entries({
+		"{blockSelectionWithBlockId}": "blockSelectionWithBlockId",
+		"{blockSelection}": "blockSelection",
+		"{blockWithBlockId}": "blockWithBlockId",
+		"{block}": "block",
+		"{editorWithBlockId}": "editorWithBlockId",
+		"{editor}": "editor",
+		"{tableCellWithId}": "tableCellWithId"
+	}).forEach(([placeholder, type]) => {
+		if (result.includes(placeholder)) result = result.replace(placeholder, getMarkdown(editor, { type }));
+	});
+	return result;
+};
+
+//#endregion
+export { BaseAIPlugin, getEditorPrompt, getMarkdown, insertAINodes, removeAIMarks, removeAINodes, replacePlaceholders, undoAI, withAIBatch };
