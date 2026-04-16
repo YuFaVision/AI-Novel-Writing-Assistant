@@ -1,0 +1,9 @@
+{
+  "appId": "com.example.ainovel",
+  "appName": "AI Novel Writing Assistant",
+  "webDir": "dist",
+  "server": {
+    "url": "http://localhost:5173",
+    "cleartext": true
+  }
+}
