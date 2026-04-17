@@ -1,0 +1,1 @@
+{"version":3,"file":"index.d.ts","sourceRoot":"","sources":["../../src/subscribable/index.ts"],"names":[],"mappings":"AAAA,OAAO,EAEL,WAAW,EAEX,gBAAgB,EAChB,WAAW,EAEX,qBAAqB,EACrB,kBAAkB,EAClB,yBAAyB,EACzB,wBAAwB,GACzB,0BAAuB;AAExB,YAAY,EACV,WAAW,IAAI,gBAAgB,EAE/B,YAAY,EACZ,qBAAqB,EACrB,kBAAkB,EAClB,iBAAiB,GAClB,0BAAuB"}

@@ -1,0 +1,1 @@
+{"version":3,"file":"FrameHost.d.ts","sourceRoot":"","sources":["../src/FrameHost.ts"],"names":[],"mappings":"AAEA,qBAAa,SAAS;IACpB,OAAO,CAAC,KAAK,CAAoB;IACjC,OAAO,CAAC,YAAY,CAAe;IACnC,OAAO,CAAC,eAAe,CAAgC;gBAE3C,KAAK,EAAE,iBAAiB;IAmBpC,OAAO;CAIR"}

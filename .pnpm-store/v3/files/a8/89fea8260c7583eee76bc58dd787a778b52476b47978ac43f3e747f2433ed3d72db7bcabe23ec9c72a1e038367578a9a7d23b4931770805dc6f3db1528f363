@@ -1,0 +1,22 @@
+import { ComponentType, FC } from "react";
+export declare namespace ThreadListPrimitiveItems {
+    type Props = {
+        archived?: boolean | undefined;
+        components: {
+            ThreadListItem: ComponentType;
+        };
+    };
+}
+export declare namespace ThreadListPrimitiveItemByIndex {
+    type Props = {
+        index: number;
+        archived?: boolean | undefined;
+        components: ThreadListPrimitiveItems.Props["components"];
+    };
+}
+/**
+ * Renders a single thread list item at the specified index.
+ */
+export declare const ThreadListPrimitiveItemByIndex: FC<ThreadListPrimitiveItemByIndex.Props>;
+export declare const ThreadListPrimitiveItems: FC<ThreadListPrimitiveItems.Props>;
+//# sourceMappingURL=ThreadListItems.d.ts.map

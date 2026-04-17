@@ -1,0 +1,102 @@
+import { KEYS, TextApi, bindFirst, createTSlatePlugin, getPluginType } from "platejs";
+import { getTransientSuggestionKey } from "@platejs/suggestion";
+import { isSelecting } from "@platejs/selection";
+
+//#region src/lib/transforms/insertAINodes.ts
+const insertAINodes = (editor, nodes, { target } = {}) => {
+	if (!target && !editor.selection?.focus.path) return;
+	const aiNodes = nodes.map((node) => ({
+		...node,
+		ai: true
+	}));
+	editor.tf.withoutNormalizing(() => {
+		editor.tf.insertNodes(aiNodes, {
+			at: editor.api.end(target || editor.selection.focus.path),
+			select: true
+		});
+		editor.tf.collapse({ edge: "end" });
+	});
+};
+
+//#endregion
+//#region src/lib/transforms/removeAIMarks.ts
+const removeAIMarks = (editor, { at = [] } = {}) => {
+	const nodeType = getPluginType(editor, KEYS.ai);
+	editor.tf.unsetNodes(nodeType, {
+		at,
+		match: (n) => n[nodeType]
+	});
+};
+
+//#endregion
+//#region src/lib/transforms/removeAINodes.ts
+const removeAINodes = (editor, { at = [] } = {}) => {
+	editor.tf.removeNodes({
+		at,
+		match: (n) => TextApi.isText(n) && !!n.ai
+	});
+};
+
+//#endregion
+//#region src/lib/transforms/undoAI.ts
+const undoAI = (editor) => {
+	const hasAINodeOrAISuggestion = editor.api.some({
+		at: [],
+		match: (n) => !!n.ai
+	}) || editor.api.some({
+		at: [],
+		match: (n) => !!n[getTransientSuggestionKey()]
+	});
+	if (editor.history.undos.at(-1)?.ai && hasAINodeOrAISuggestion) {
+		editor.undo();
+		editor.history.redos.pop();
+	}
+};
+
+//#endregion
+//#region src/lib/transforms/withAIBatch.ts
+const withAIBatch = (editor, fn, { split } = {}) => {
+	if (split) editor.tf.withNewBatch(fn);
+	else editor.tf.withMerging(fn);
+	const lastBatch = editor.history.undos?.at(-1);
+	if (lastBatch) lastBatch.ai = true;
+};
+
+//#endregion
+//#region src/lib/BaseAIPlugin.ts
+const BaseAIPlugin = createTSlatePlugin({
+	key: KEYS.ai,
+	node: {
+		isDecoration: false,
+		isLeaf: true
+	}
+}).extendTransforms(({ editor }) => ({
+	insertNodes: bindFirst(insertAINodes, editor),
+	removeMarks: bindFirst(removeAIMarks, editor),
+	removeNodes: bindFirst(removeAINodes, editor),
+	undo: bindFirst(undoAI, editor)
+}));
+
+//#endregion
+//#region src/lib/utils/getEditorPrompt.ts
+const createPromptFromConfig = (config, params) => {
+	const { isBlockSelecting, isSelecting: isSelecting$1 } = params;
+	if (isBlockSelecting && config.blockSelecting) return config.blockSelecting ?? config.default;
+	if (isSelecting$1 && config.selecting) return config.selecting ?? config.default;
+	return config.default;
+};
+const getEditorPrompt = (editor, { prompt = "" }) => {
+	const params = {
+		editor,
+		isBlockSelecting: editor.getOption({ key: KEYS.blockSelection }, "isSelectingSome"),
+		isSelecting: isSelecting(editor)
+	};
+	let promptText = "";
+	if (typeof prompt === "function") promptText = prompt(params);
+	else if (typeof prompt === "object") promptText = createPromptFromConfig(prompt, params);
+	else promptText = prompt;
+	return promptText;
+};
+
+//#endregion
+export { removeAINodes as a, undoAI as i, BaseAIPlugin as n, removeAIMarks as o, withAIBatch as r, insertAINodes as s, getEditorPrompt as t };

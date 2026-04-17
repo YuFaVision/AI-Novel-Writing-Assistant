@@ -1,0 +1,220 @@
+"use client";
+import { parsePartialJsonObject, } from "assistant-stream/utils";
+const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+const stabilizeToolArgsValue = (value, path, keyOrderByPath) => {
+    if (Array.isArray(value)) {
+        return value.map((item, idx) => stabilizeToolArgsValue(item, `${path}[${idx}]`, keyOrderByPath));
+    }
+    if (value && typeof value === "object") {
+        const record = value;
+        const currentKeys = Object.keys(record);
+        const previousOrder = keyOrderByPath.get(path) ?? [];
+        const previousOrderSet = new Set(previousOrder);
+        const nextOrder = [
+            ...previousOrder.filter((key) => hasOwn(record, key)),
+            ...currentKeys.filter((key) => !previousOrderSet.has(key)),
+        ];
+        keyOrderByPath.set(path, nextOrder);
+        return Object.fromEntries(nextOrder.map((key) => [
+            key,
+            stabilizeToolArgsValue(record[key], `${path}.${key}`, keyOrderByPath),
+        ]));
+    }
+    return value;
+};
+const getToolArgsKeyOrder = (keyOrderCache, cacheKey) => {
+    const keyOrderByPath = keyOrderCache?.get(cacheKey) ?? new Map();
+    keyOrderCache?.set(cacheKey, keyOrderByPath);
+    return keyOrderByPath;
+};
+const trackToolArgsKeyOrder = (keyOrderCache, cacheKey, args) => {
+    const keyOrderByPath = getToolArgsKeyOrder(keyOrderCache, cacheKey);
+    stabilizeToolArgsValue(args, "$", keyOrderByPath);
+};
+const stableStringifyToolArgs = (keyOrderCache, cacheKey, args) => {
+    const keyOrderByPath = getToolArgsKeyOrder(keyOrderCache, cacheKey);
+    const stableArgs = stabilizeToolArgsValue(args, "$", keyOrderByPath);
+    return JSON.stringify(stableArgs);
+};
+const getToolArgsCacheKey = (messageId, kind, toolCallId) => `${messageId ?? "unknown"}:${kind}:${toolCallId}`;
+const resolveToolCallArgs = ({ chunk, matchingToolCallChunk, messageId, toolArgsKeyOrderCache, }) => {
+    const cacheKey = getToolArgsCacheKey(messageId, "tool", chunk.id);
+    const providedArgsText = chunk.partial_json ??
+        matchingToolCallChunk?.args ??
+        matchingToolCallChunk?.args_json;
+    const argsText = providedArgsText ??
+        stableStringifyToolArgs(toolArgsKeyOrderCache, cacheKey, chunk.args);
+    const parsedPartialArgs = argsText ? parsePartialJsonObject(argsText) : null;
+    const args = (argsText ? (parsedPartialArgs ?? {}) : chunk.args);
+    trackToolArgsKeyOrder(toolArgsKeyOrderCache, cacheKey, (parsedPartialArgs ?? chunk.args));
+    if (providedArgsText == null) {
+        toolArgsKeyOrderCache?.delete(cacheKey);
+    }
+    return { args, argsText };
+};
+const getCustomMetadata = (additionalKwargs) => additionalKwargs?.metadata ?? {};
+const warnedMessagePartTypes = new Set();
+const warnForUnknownMessagePartType = (type) => {
+    if (typeof process === "undefined" ||
+        process?.env?.["NODE_ENV"] !== "development")
+        return;
+    if (warnedMessagePartTypes.has(type))
+        return;
+    warnedMessagePartTypes.add(type);
+    console.warn(`Unknown message part type: ${type}`);
+};
+const warnedFilePartShapes = new Set();
+const warnForUnsupportedFilePartShape = (part) => {
+    if (typeof process === "undefined" ||
+        process?.env?.["NODE_ENV"] !== "development")
+        return;
+    const shape = Object.keys(part).sort().join(",");
+    if (warnedFilePartShapes.has(shape))
+        return;
+    warnedFilePartShapes.add(shape);
+    console.warn(`Unsupported file content block shape: ${shape}`);
+};
+const contentFilePartToThreadPart = (part) => {
+    if ("file" in part) {
+        return {
+            type: "file",
+            filename: part.file.filename,
+            data: part.file.file_data,
+            mimeType: part.file.mime_type,
+        };
+    }
+    if ("data" in part && typeof part.data === "string") {
+        return {
+            type: "file",
+            filename: part.metadata?.filename ?? "file",
+            data: part.data,
+            mimeType: part.mime_type,
+        };
+    }
+    if ("base64" in part && typeof part.base64 === "string") {
+        return {
+            type: "file",
+            filename: part.filename ?? "file",
+            data: part.base64,
+            mimeType: part.mime_type,
+        };
+    }
+    warnForUnsupportedFilePartShape(part);
+    return null;
+};
+const contentToParts = (content, metadata, messageId) => {
+    if (typeof content === "string")
+        return [{ type: "text", text: content }];
+    return content
+        .map((part) => {
+        const type = part.type;
+        switch (type) {
+            case "text":
+                return { type: "text", text: part.text };
+            case "text_delta":
+                return { type: "text", text: part.text };
+            case "image_url":
+                if (typeof part.image_url === "string") {
+                    return { type: "image", image: part.image_url };
+                }
+                else {
+                    return {
+                        type: "image",
+                        image: part.image_url.url,
+                    };
+                }
+            case "file":
+                return contentFilePartToThreadPart(part);
+            case "thinking":
+                return { type: "reasoning", text: part.thinking };
+            case "reasoning":
+                return {
+                    type: "reasoning",
+                    text: part.summary.map((s) => s.text).join("\n\n\n"),
+                };
+            case "tool_use":
+                return null;
+            case "input_json_delta":
+                return null;
+            case "computer_call":
+                const args = part.action;
+                return {
+                    type: "tool-call",
+                    toolCallId: part.call_id,
+                    toolName: "computer_call",
+                    args,
+                    argsText: stableStringifyToolArgs(metadata.toolArgsKeyOrderCache, getToolArgsCacheKey(messageId, "computer", part.call_id), args),
+                };
+            default:
+                const _exhaustiveCheck = type;
+                warnForUnknownMessagePartType(_exhaustiveCheck);
+                return null;
+            // const _exhaustiveCheck: never = type;
+            // throw new Error(`Unknown message part type: ${_exhaustiveCheck}`);
+        }
+    })
+        .filter((a) => a !== null);
+};
+export const convertLangChainMessages = (message, metadata = {}) => {
+    switch (message.type) {
+        case "system":
+            return {
+                role: "system",
+                id: message.id,
+                content: [{ type: "text", text: message.content }],
+                metadata: { custom: getCustomMetadata(message.additional_kwargs) },
+            };
+        case "human":
+            return {
+                role: "user",
+                id: message.id,
+                content: contentToParts(message.content, metadata, message.id),
+                metadata: { custom: getCustomMetadata(message.additional_kwargs) },
+            };
+        case "ai":
+            const toolCallParts = message.tool_calls?.map((chunk) => {
+                const matchingToolCallChunk = message.tool_call_chunks?.find((c) => c.id === chunk.id);
+                const { args, argsText } = resolveToolCallArgs({
+                    chunk,
+                    matchingToolCallChunk,
+                    messageId: message.id,
+                    toolArgsKeyOrderCache: metadata.toolArgsKeyOrderCache,
+                });
+                return {
+                    type: "tool-call",
+                    toolCallId: chunk.id,
+                    toolName: chunk.name,
+                    args,
+                    argsText,
+                };
+            }) ?? [];
+            const normalizedContent = typeof message.content === "string"
+                ? [{ type: "text", text: message.content }]
+                : message.content;
+            const allContent = [
+                message.additional_kwargs?.reasoning,
+                ...normalizedContent,
+                ...(message.additional_kwargs?.tool_outputs ?? []),
+            ].filter((c) => c !== undefined);
+            return {
+                role: "assistant",
+                id: message.id,
+                content: [
+                    ...contentToParts(allContent, metadata, message.id),
+                    ...toolCallParts,
+                ],
+                metadata: { custom: getCustomMetadata(message.additional_kwargs) },
+                ...(message.status && { status: message.status }),
+            };
+        case "tool":
+            return {
+                role: "tool",
+                toolName: message.name,
+                toolCallId: message.tool_call_id,
+                result: message.content,
+                artifact: message.artifact,
+                isError: message.status === "error",
+            };
+    }
+};
+//# sourceMappingURL=convertLangChainMessages.js.map

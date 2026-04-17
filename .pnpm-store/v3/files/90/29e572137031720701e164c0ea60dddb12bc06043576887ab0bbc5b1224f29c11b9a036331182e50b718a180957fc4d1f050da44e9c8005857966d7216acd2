@@ -1,0 +1,8 @@
+export type { LanguageModelV1CallSettings, LanguageModelConfig, ModelContext, ModelContextProvider, AssistantToolProps, AssistantInstructionsConfig, } from "./types.js";
+export { mergeModelContexts } from "./types.js";
+export { tool } from "./tool.js";
+export { ModelContextRegistry } from "./registry.js";
+export type { ModelContextRegistryToolHandle, ModelContextRegistryInstructionHandle, ModelContextRegistryProviderHandle, } from "./registry-handles.js";
+export { AssistantFrameHost, AssistantFrameProvider, FRAME_MESSAGE_CHANNEL, } from "./frame/index.js";
+export type { SerializedTool, SerializedModelContext, FrameMessageType, FrameMessage, } from "./frame/index.js";
+//# sourceMappingURL=index.d.ts.map

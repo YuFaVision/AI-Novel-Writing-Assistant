@@ -1,0 +1,39 @@
+import * as platejs0 from "platejs";
+import * as platejs_react0 from "platejs/react";
+
+//#region src/react/SuggestionPlugin.d.ts
+/** @experimental Enables support for suggestions in the editor. */
+declare const SuggestionPlugin: platejs_react0.PlatePlugin<platejs0.PluginConfig<"suggestion", {
+  currentUserId: string | null;
+  isSuggesting: boolean;
+}, {
+  suggestion: {
+    dataList: (node: platejs0.TSuggestionText) => platejs0.TInlineSuggestionData[];
+    isBlockSuggestion: (node: platejs0.TNode) => node is platejs0.TSuggestionElement;
+    node: (options?: platejs0.EditorNodesOptions & {
+      id?: string;
+      isText?: boolean;
+    }) => platejs0.NodeEntry<platejs0.TSuggestionElement | platejs0.TSuggestionText> | undefined;
+    nodeId: (node: platejs0.TElement | platejs0.TSuggestionText) => string | undefined;
+    nodes: (options?: platejs0.EditorNodesOptions & {
+      transient?: boolean;
+    }) => platejs0.NodeEntry<platejs0.TElement | platejs0.TSuggestionText>[];
+    suggestionData: (node: platejs0.TElement | platejs0.TSuggestionText) => platejs0.TInlineSuggestionData | platejs0.TSuggestionElement["suggestion"] | undefined;
+    withoutSuggestions: (fn: () => void) => void;
+  };
+} & Record<"suggestion", {
+  dataList: (node: platejs0.TSuggestionText) => platejs0.TInlineSuggestionData[];
+  isBlockSuggestion: (node: platejs0.TNode) => node is platejs0.TSuggestionElement;
+  node: (options?: platejs0.EditorNodesOptions & {
+    id?: string;
+    isText?: boolean;
+  }) => platejs0.NodeEntry<platejs0.TSuggestionElement | platejs0.TSuggestionText> | undefined;
+  nodeId: (node: platejs0.TElement | platejs0.TSuggestionText) => string | undefined;
+  nodes: (options?: platejs0.EditorNodesOptions & {
+    transient?: boolean;
+  }) => platejs0.NodeEntry<platejs0.TElement | platejs0.TSuggestionText>[];
+  suggestionData: (node: platejs0.TElement | platejs0.TSuggestionText) => platejs0.TInlineSuggestionData | platejs0.TSuggestionElement["suggestion"] | undefined;
+  withoutSuggestions: (fn: () => void) => void;
+}>, {}, {}>>;
+//#endregion
+export { SuggestionPlugin };

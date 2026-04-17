@@ -1,0 +1,35 @@
+interface ApiData {
+    apiId: number;
+    state: any;
+    events: any[];
+    context?: any;
+}
+type UpdateListener = (data: {
+    apiList?: Array<{
+        apiId: number;
+    }>;
+    apis?: ApiData[];
+}) => void;
+export declare class FrameClient {
+    private listeners;
+    private connectionListeners;
+    private lastUpdate;
+    constructor();
+    private setupMessageListener;
+    onHostConnected(listener: () => void): () => void;
+    subscribe(listener: UpdateListener): () => void;
+    setSubscription(options: {
+        apiList?: boolean;
+        apis?: number[];
+    }): void;
+    clearEvents(apiId: number): void;
+    private notifyListeners;
+    getLastUpdate(): {
+        apiList?: Array<{
+            apiId: number;
+        }>;
+        apis?: ApiData[];
+    };
+}
+export {};
+//# sourceMappingURL=FrameClient.d.ts.map

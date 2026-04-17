@@ -1,0 +1,4 @@
+import { LangChainMessage } from "./types.js";
+import { LangGraphMessagesEvent } from "./useLangGraphMessages.js";
+export declare const mockStreamCallbackFactory: (events: Array<LangGraphMessagesEvent<LangChainMessage>>) => () => AsyncGenerator<LangGraphMessagesEvent<LangChainMessage>, void, unknown>;
+//# sourceMappingURL=testUtils.d.ts.map

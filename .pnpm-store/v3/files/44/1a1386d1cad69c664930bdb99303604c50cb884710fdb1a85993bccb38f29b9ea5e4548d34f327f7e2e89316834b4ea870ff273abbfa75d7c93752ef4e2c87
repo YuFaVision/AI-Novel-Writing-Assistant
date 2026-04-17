@@ -1,0 +1,249 @@
+import * as platejs36 from "platejs";
+import { Descendant, EditorNodesOptions, Node, NodeEntry, OverrideEditor, PluginConfig, SetNodesOptions, SlateEditor, TElement, TInlineSuggestionData, TLocation, TNode, TRange, TSuggestionElement, TSuggestionText, TText, Text, UnknownObject, ValueOf } from "platejs";
+import { ComputeDiffOptions } from "@platejs/diff";
+
+//#region src/lib/BaseSuggestionPlugin.d.ts
+type BaseSuggestionConfig = PluginConfig<'suggestion', {
+  currentUserId: string | null;
+  isSuggesting: boolean;
+}, {
+  suggestion: {
+    dataList: (node: TSuggestionText) => TInlineSuggestionData[];
+    isBlockSuggestion: (node: TNode) => node is TSuggestionElement;
+    node: (options?: EditorNodesOptions & {
+      id?: string;
+      isText?: boolean;
+    }) => NodeEntry<TSuggestionElement | TSuggestionText> | undefined;
+    nodeId: (node: TElement | TSuggestionText) => string | undefined;
+    nodes: (options?: EditorNodesOptions & {
+      transient?: boolean;
+    }) => NodeEntry<TElement | TSuggestionText>[];
+    suggestionData: (node: TElement | TSuggestionText) => TInlineSuggestionData | TSuggestionElement['suggestion'] | undefined;
+    withoutSuggestions: (fn: () => void) => void;
+  };
+}>;
+declare const BaseSuggestionPlugin: platejs36.SlatePlugin<PluginConfig<"suggestion", {
+  currentUserId: string | null;
+  isSuggesting: boolean;
+}, {
+  suggestion: {
+    dataList: (node: TSuggestionText) => TInlineSuggestionData[];
+    isBlockSuggestion: (node: TNode) => node is TSuggestionElement;
+    node: (options?: EditorNodesOptions & {
+      id?: string;
+      isText?: boolean;
+    }) => NodeEntry<TSuggestionElement | TSuggestionText> | undefined;
+    nodeId: (node: TElement | TSuggestionText) => string | undefined;
+    nodes: (options?: EditorNodesOptions & {
+      transient?: boolean;
+    }) => NodeEntry<TElement | TSuggestionText>[];
+    suggestionData: (node: TElement | TSuggestionText) => TInlineSuggestionData | TSuggestionElement["suggestion"] | undefined;
+    withoutSuggestions: (fn: () => void) => void;
+  };
+} & Record<"suggestion", {
+  dataList: (node: TSuggestionText) => TInlineSuggestionData[];
+  isBlockSuggestion: (node: TNode) => node is TSuggestionElement;
+  node: (options?: EditorNodesOptions & {
+    id?: string;
+    isText?: boolean;
+  }) => NodeEntry<TSuggestionElement | TSuggestionText> | undefined;
+  nodeId: (node: TElement | TSuggestionText) => string | undefined;
+  nodes: (options?: EditorNodesOptions & {
+    transient?: boolean;
+  }) => NodeEntry<TElement | TSuggestionText>[];
+  suggestionData: (node: TElement | TSuggestionText) => TInlineSuggestionData | TSuggestionElement["suggestion"] | undefined;
+  withoutSuggestions: (fn: () => void) => void;
+}>, {}, {}>>;
+//#endregion
+//#region src/lib/diffToSuggestions.d.ts
+declare function diffToSuggestions<E extends SlateEditor>(editor: E, doc0: Descendant[], doc1: Descendant[], {
+  getDeleteProps,
+  getInsertProps,
+  getUpdateProps,
+  isInline,
+  ...options
+}?: Partial<ComputeDiffOptions>): ValueOf<E>;
+//#endregion
+//#region src/lib/types.d.ts
+type SuggestionEditorProps = {
+  activeSuggestionId?: string | null;
+  isSuggesting?: boolean;
+};
+type SuggestionUser = UnknownObject & {
+  id: string;
+  name: string;
+  avatarUrl?: string;
+};
+type TResolvedSuggestion = {
+  createdAt: Date;
+  keyId: string;
+  suggestionId: string;
+  type: 'insert' | 'remove' | 'replace' | 'update';
+  userId: string;
+  newProperties?: any;
+  newText?: string;
+  properties?: any;
+  text?: string;
+};
+interface TSuggestion extends UnknownObject {
+  id: string;
+  isAccepted?: boolean;
+  isRejected?: boolean;
+}
+//#endregion
+//#region src/lib/withSuggestion.d.ts
+declare const withSuggestion: OverrideEditor<BaseSuggestionConfig>;
+//#endregion
+//#region src/lib/queries/findSuggestionNode.d.ts
+declare const findInlineSuggestionNode: <E extends SlateEditor>(editor: E, options?: EditorNodesOptions<ValueOf<E>>) => platejs36.NodeEntry<TSuggestionText> | undefined;
+//#endregion
+//#region src/lib/queries/findSuggestionProps.d.ts
+declare const findSuggestionProps: (editor: SlateEditor, {
+  at,
+  type
+}: {
+  at: TLocation;
+  type: "insert" | "remove" | "update";
+}) => {
+  id: string;
+  createdAt: number;
+};
+//#endregion
+//#region src/lib/transforms/acceptSuggestion.d.ts
+declare const acceptSuggestion: (editor: SlateEditor, description: TResolvedSuggestion) => void;
+//#endregion
+//#region src/lib/transforms/addMarkSuggestion.d.ts
+declare const addMarkSuggestion: (editor: SlateEditor, key: string, value: any) => void;
+//#endregion
+//#region src/lib/transforms/deleteFragmentSuggestion.d.ts
+declare const deleteFragmentSuggestion: (editor: SlateEditor, {
+  reverse
+}?: {
+  reverse?: boolean;
+}) => string | undefined;
+//#endregion
+//#region src/lib/transforms/deleteSuggestion.d.ts
+/**
+ * Suggest deletion one character at a time until target point is reached.
+ * Suggest additions are safely deleted.
+ */
+declare const deleteSuggestion: (editor: SlateEditor, at: TRange, {
+  reverse
+}?: {
+  reverse?: boolean;
+}) => string | undefined;
+//#endregion
+//#region src/lib/transforms/getSuggestionProps.d.ts
+declare const getSuggestionProps: (editor: SlateEditor, node: Descendant, {
+  id,
+  createdAt,
+  suggestionDeletion,
+  suggestionUpdate,
+  transient
+}?: {
+  id?: string;
+  createdAt?: number;
+  suggestionDeletion?: boolean;
+  suggestionUpdate?: any;
+  transient?: boolean;
+}) => {
+  [x: string]: boolean | {
+    id: string;
+    createdAt: number;
+    type: string;
+    userId: string;
+  };
+  suggestion: boolean;
+} | {
+  suggestion: {
+    id: string;
+    createdAt: number;
+    type: string;
+    userId: string;
+  };
+};
+//#endregion
+//#region src/lib/transforms/insertFragmentSuggestion.d.ts
+declare const insertFragmentSuggestion: (editor: SlateEditor, fragment: Descendant[], {
+  insertFragment
+}?: {
+  insertFragment?: (fragment: Descendant[]) => void;
+}) => void;
+//#endregion
+//#region src/lib/transforms/insertTextSuggestion.d.ts
+declare const insertTextSuggestion: (editor: SlateEditor, text: string) => void;
+//#endregion
+//#region src/lib/transforms/rejectSuggestion.d.ts
+declare const rejectSuggestion: (editor: SlateEditor, description: TResolvedSuggestion) => void;
+//#endregion
+//#region src/lib/transforms/removeMarkSuggestion.d.ts
+declare const removeMarkSuggestion: (editor: SlateEditor, key: string) => void;
+//#endregion
+//#region src/lib/transforms/removeNodesSuggestion.d.ts
+declare const removeNodesSuggestion: (editor: SlateEditor, nodes: NodeEntry<TElement | Text>[]) => void;
+//#endregion
+//#region src/lib/transforms/setSuggestionNodes.d.ts
+declare const setSuggestionNodes: (editor: SlateEditor, options?: {
+  createdAt?: number;
+  suggestionDeletion?: boolean;
+  suggestionId?: string;
+} & SetNodesOptions) => void;
+//#endregion
+//#region src/lib/utils/SkipSuggestionDeletes.d.ts
+/**
+ * Recursively extracts text content from a node tree, excluding any text marked
+ * with "remove" suggestions. but include the text marked with "insert" and
+ * "update" suggestions.
+ */
+declare const SkipSuggestionDeletes: (editor: SlateEditor, node: Node) => string;
+//#endregion
+//#region src/lib/utils/getActiveSuggestionDescriptions.d.ts
+type TSuggestionCommonDescription = {
+  suggestionId: string;
+  userId: string;
+};
+type TSuggestionDeletionDescription = {
+  deletedText: string;
+  type: 'deletion';
+} & TSuggestionCommonDescription;
+type TSuggestionDescription = TSuggestionDeletionDescription | TSuggestionInsertionDescription | TSuggestionReplacementDescription;
+type TSuggestionInsertionDescription = {
+  insertedText: string;
+  type: 'insertion';
+} & TSuggestionCommonDescription;
+type TSuggestionReplacementDescription = {
+  deletedText: string;
+  insertedText: string;
+  type: 'replacement';
+} & TSuggestionCommonDescription;
+/**
+ * Get the suggestion descriptions of the selected node. A node can have
+ * multiple suggestions (multiple users). Each description maps to a user
+ * suggestion.
+ */
+declare const getActiveSuggestionDescriptions: (editor: SlateEditor) => TSuggestionDescription[];
+//#endregion
+//#region src/lib/utils/getSuggestionId.d.ts
+declare const getSuggestionKeyId: (node: TElement | TText) => string | undefined;
+declare const getInlineSuggestionData: (node: TElement | TText) => TInlineSuggestionData | undefined;
+declare const keyId2SuggestionId: (keyId: string) => string;
+//#endregion
+//#region src/lib/utils/getSuggestionKeys.d.ts
+declare const getSuggestionKey: (id?: string) => string;
+declare const isSuggestionKey: (key: string) => boolean;
+declare const getSuggestionKeys: (node: TNode) => string[];
+declare const getSuggestionUserIdByKey: (key?: string | null) => string | null;
+declare const getSuggestionUserIds: (node: TNode) => string[];
+declare const getSuggestionUserId: (node: TNode) => string;
+declare const isCurrentUserSuggestion: (editor: SlateEditor, node: TText) => boolean;
+//#endregion
+//#region src/lib/utils/getSuggestionNodeEntries.d.ts
+declare const getSuggestionNodeEntries: <E extends SlateEditor>(editor: E, suggestionId: string, {
+  at,
+  ...options
+}?: EditorNodesOptions<ValueOf<E>>) => Generator<platejs36.NodeEntry<TSuggestionText>, void, undefined>;
+//#endregion
+//#region src/lib/utils/getTransientSuggestionKey.d.ts
+declare const getTransientSuggestionKey: () => string;
+//#endregion
+export { BaseSuggestionConfig, BaseSuggestionPlugin, SkipSuggestionDeletes, SuggestionEditorProps, SuggestionUser, TResolvedSuggestion, TSuggestion, TSuggestionCommonDescription, TSuggestionDeletionDescription, TSuggestionDescription, TSuggestionInsertionDescription, TSuggestionReplacementDescription, acceptSuggestion, addMarkSuggestion, deleteFragmentSuggestion, deleteSuggestion, diffToSuggestions, findInlineSuggestionNode, findSuggestionProps, getActiveSuggestionDescriptions, getInlineSuggestionData, getSuggestionKey, getSuggestionKeyId, getSuggestionKeys, getSuggestionNodeEntries, getSuggestionProps, getSuggestionUserId, getSuggestionUserIdByKey, getSuggestionUserIds, getTransientSuggestionKey, insertFragmentSuggestion, insertTextSuggestion, isCurrentUserSuggestion, isSuggestionKey, keyId2SuggestionId, rejectSuggestion, removeMarkSuggestion, removeNodesSuggestion, setSuggestionNodes, withSuggestion };

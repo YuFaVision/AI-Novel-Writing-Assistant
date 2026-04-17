@@ -1,0 +1,76 @@
+import { LangChainMessage, LangGraphTupleMetadata, OnMessageChunkCallback, OnValuesEventCallback, OnUpdatesEventCallback, OnCustomEventCallback, OnErrorEventCallback, OnInfoEventCallback, OnMetadataEventCallback } from "./types.js";
+import { AssistantCloud } from "@assistant-ui/react";
+import { LangGraphCommand, LangGraphInterruptState, LangGraphSendMessageConfig, LangGraphStreamCallback } from "./useLangGraphMessages.js";
+import { AttachmentAdapter } from "@assistant-ui/react";
+import { FeedbackAdapter } from "@assistant-ui/react";
+import { SpeechSynthesisAdapter } from "@assistant-ui/react";
+export declare const useLangGraphInterruptState: () => LangGraphInterruptState | undefined;
+export declare const useLangGraphSend: () => (messages: LangChainMessage[], config: LangGraphSendMessageConfig) => Promise<void>;
+export declare const useLangGraphSendCommand: () => (command: LangGraphCommand) => Promise<void>;
+export declare const useLangGraphMessageMetadata: () => Map<string, LangGraphTupleMetadata>;
+type UseLangGraphRuntimeOptions = {
+    autoCancelPendingToolCalls?: boolean | undefined;
+    unstable_allowCancellation?: boolean | undefined;
+    stream: LangGraphStreamCallback<LangChainMessage>;
+    /**
+     * Resolves a checkpoint ID for a given thread and message history.
+     * When provided, enables message editing (onEdit) and regeneration (onReload).
+     * The checkpoint ID is passed to the stream callback for server-side forking.
+     */
+    getCheckpointId?: (threadId: string, parentMessages: LangChainMessage[]) => Promise<string | null>;
+    /**
+     * @deprecated This method has been renamed to `load`. Use `load` instead.
+     */
+    onSwitchToThread?: (threadId: string) => Promise<{
+        messages: LangChainMessage[];
+        interrupts?: LangGraphInterruptState[];
+    }>;
+    load?: (threadId: string) => Promise<{
+        messages: LangChainMessage[];
+        interrupts?: LangGraphInterruptState[];
+    }>;
+    create?: () => Promise<{
+        externalId: string;
+    }>;
+    delete?: (threadId: string) => Promise<void>;
+    adapters?: {
+        attachments?: AttachmentAdapter;
+        speech?: SpeechSynthesisAdapter;
+        feedback?: FeedbackAdapter;
+    } | undefined;
+    eventHandlers?: {
+        /**
+         * Called for each message chunk received from messages-tuple streaming,
+         * with the chunk and its associated metadata
+         */
+        onMessageChunk?: OnMessageChunkCallback;
+        /**
+         * Called when values events are received from the LangGraph stream
+         */
+        onValues?: OnValuesEventCallback;
+        /**
+         * Called when updates events are received from the LangGraph stream
+         */
+        onUpdates?: OnUpdatesEventCallback;
+        /**
+         * Called when metadata is received from the LangGraph stream
+         */
+        onMetadata?: OnMetadataEventCallback;
+        /**
+         * Called when informational messages are received from the LangGraph stream
+         */
+        onInfo?: OnInfoEventCallback;
+        /**
+         * Called when errors occur during LangGraph stream processing
+         */
+        onError?: OnErrorEventCallback;
+        /**
+         * Called when custom events are received from the LangGraph stream
+         */
+        onCustomEvent?: OnCustomEventCallback;
+    } | undefined;
+    cloud?: AssistantCloud | undefined;
+};
+export declare const useLangGraphRuntime: ({ cloud, create, delete: deleteFn, ...options }: UseLangGraphRuntimeOptions) => import("@assistant-ui/core").AssistantRuntime;
+export {};
+//# sourceMappingURL=useLangGraphRuntime.d.ts.map

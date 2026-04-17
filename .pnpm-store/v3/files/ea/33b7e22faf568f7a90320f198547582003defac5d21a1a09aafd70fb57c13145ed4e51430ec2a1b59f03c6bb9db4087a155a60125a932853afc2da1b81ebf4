@@ -1,0 +1,12 @@
+export var LangGraphKnownEventTypes;
+(function (LangGraphKnownEventTypes) {
+    LangGraphKnownEventTypes["Messages"] = "messages";
+    LangGraphKnownEventTypes["MessagesPartial"] = "messages/partial";
+    LangGraphKnownEventTypes["MessagesComplete"] = "messages/complete";
+    LangGraphKnownEventTypes["Metadata"] = "metadata";
+    LangGraphKnownEventTypes["Updates"] = "updates";
+    LangGraphKnownEventTypes["Values"] = "values";
+    LangGraphKnownEventTypes["Info"] = "info";
+    LangGraphKnownEventTypes["Error"] = "error";
+})(LangGraphKnownEventTypes || (LangGraphKnownEventTypes = {}));
+//# sourceMappingURL=types.js.map

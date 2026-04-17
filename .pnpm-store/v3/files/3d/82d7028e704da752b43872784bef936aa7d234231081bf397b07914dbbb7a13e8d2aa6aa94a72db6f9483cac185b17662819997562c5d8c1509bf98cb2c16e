@@ -1,0 +1,21 @@
+import type { LangGraphTupleMetadata } from "./types.js";
+export type LangGraphStateAccumulatorConfig<TMessage> = {
+    initialMessages?: TMessage[];
+    appendMessage?: (prev: TMessage | undefined, curr: TMessage) => TMessage;
+};
+export declare class LangGraphMessageAccumulator<TMessage extends {
+    id?: string;
+}> {
+    private messagesMap;
+    private metadataMap;
+    private appendMessage;
+    constructor({ initialMessages, appendMessage, }?: LangGraphStateAccumulatorConfig<TMessage>);
+    private ensureMessageId;
+    addMessages(newMessages: TMessage[]): TMessage[];
+    addMessageWithMetadata(message: TMessage, metadata: LangGraphTupleMetadata): TMessage[];
+    getMessages(): TMessage[];
+    getMetadataMap(): Map<string, LangGraphTupleMetadata>;
+    replaceMessages(newMessages: TMessage[]): TMessage[];
+    clear(): void;
+}
+//# sourceMappingURL=LangGraphMessageAccumulator.d.ts.map

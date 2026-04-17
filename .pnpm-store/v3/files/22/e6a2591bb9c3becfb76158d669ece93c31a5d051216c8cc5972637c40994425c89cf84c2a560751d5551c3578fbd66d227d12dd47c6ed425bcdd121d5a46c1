@@ -1,0 +1,8 @@
+export interface DevToolsFrameProps {
+    frameUrl?: string;
+    className?: string;
+    style?: React.CSSProperties;
+    title?: string;
+}
+export declare const DevToolsFrame: React.FC<DevToolsFrameProps>;
+//# sourceMappingURL=DevToolsFrame.d.ts.map

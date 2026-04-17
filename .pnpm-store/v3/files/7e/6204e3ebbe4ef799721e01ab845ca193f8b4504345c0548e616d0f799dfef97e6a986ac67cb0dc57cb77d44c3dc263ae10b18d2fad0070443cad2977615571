@@ -1,0 +1,7 @@
+export declare class ExtensionHost {
+    private devToolsHost;
+    private messageListener;
+    constructor();
+    destroy(): void;
+}
+//# sourceMappingURL=ExtensionHost.d.ts.map

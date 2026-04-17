@@ -1,0 +1,9 @@
+import type { ToolsClientSchema } from "./scopes/tools.js";
+import type { DataRenderersClientSchema } from "./scopes/dataRenderers.js";
+declare module "@assistant-ui/store" {
+    interface ScopeRegistry {
+        tools: ToolsClientSchema;
+        dataRenderers: DataRenderersClientSchema;
+    }
+}
+//# sourceMappingURL=store-augmentation.d.ts.map

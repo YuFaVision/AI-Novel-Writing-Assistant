@@ -1,0 +1,9 @@
+import { a as BaseSuggestionPlugin } from "../src-COX5sId2.js";
+import { toPlatePlugin } from "platejs/react";
+
+//#region src/react/SuggestionPlugin.tsx
+/** @experimental Enables support for suggestions in the editor. */
+const SuggestionPlugin = toPlatePlugin(BaseSuggestionPlugin);
+
+//#endregion
+export { SuggestionPlugin };

@@ -1,0 +1,14 @@
+import { SlateEditor } from "platejs";
+
+//#region src/lib/extractSelectableIds.d.ts
+declare const extractSelectableIds: (els: Element[]) => string[];
+declare const extractSelectableId: (el: Element) => string | undefined;
+//#endregion
+//#region src/lib/getAboveDomNode.d.ts
+declare const querySelectorSelectable: (id: string) => Element | null;
+declare const querySelectorAllSelectable: () => NodeListOf<Element>;
+//#endregion
+//#region src/lib/isSelecting.d.ts
+declare const isSelecting: (editor: SlateEditor) => any;
+//#endregion
+export { extractSelectableId, extractSelectableIds, isSelecting, querySelectorAllSelectable, querySelectorSelectable };

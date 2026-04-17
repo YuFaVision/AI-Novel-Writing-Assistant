@@ -1,0 +1,20 @@
+import { KEYS } from "platejs";
+
+//#region src/lib/extractSelectableIds.ts
+const extractSelectableIds = (els) => els.map((v) => v.dataset.blockId).filter(Boolean);
+const extractSelectableId = (el) => el.dataset.blockId;
+
+//#endregion
+//#region src/lib/getAboveDomNode.ts
+const querySelectorSelectable = (id) => document.querySelector(`.slate-selectable[data-block-id="${id}"]`);
+const querySelectorAllSelectable = () => document.querySelectorAll(".slate-selectable");
+
+//#endregion
+//#region src/lib/isSelecting.ts
+const isSelecting = (editor) => {
+	const isSelectingSome = editor.getOption({ key: KEYS.blockSelection }, "isSelectingSome");
+	return editor.api.isExpanded() || isSelectingSome;
+};
+
+//#endregion
+export { extractSelectableIds as a, extractSelectableId as i, querySelectorAllSelectable as n, querySelectorSelectable as r, isSelecting as t };

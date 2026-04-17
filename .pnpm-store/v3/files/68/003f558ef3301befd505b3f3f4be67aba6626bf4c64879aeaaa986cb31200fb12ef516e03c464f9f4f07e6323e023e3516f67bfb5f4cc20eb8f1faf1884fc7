@@ -1,0 +1,2062 @@
+import { a as extractSelectableIds, r as querySelectorSelectable, t as isSelecting } from "../isSelecting-B2fbtmz-.js";
+import { KEYS, NodeApi, PathApi, RangeApi, TextApi, bindFirst, getEditorPlugin, isHotkey } from "platejs";
+import { createTPlatePlugin, getEditorPlugin as getEditorPlugin$1, useEditorContainerRef, useEditorPlugin, useEditorRef, useEditorSelector, useElement, useIsomorphicLayoutEffect, usePath, usePluginOption } from "platejs/react";
+import React, { useEffect } from "react";
+import ReactDOM from "react-dom";
+import { c } from "react-compiler-runtime";
+import copyToClipboard from "copy-to-clipboard";
+
+//#region src/react/BlockMenuPlugin.tsx
+const BLOCK_CONTEXT_MENU_ID = "context";
+const BlockMenuPlugin = createTPlatePlugin({
+	key: KEYS.blockMenu,
+	editOnly: true,
+	options: {
+		openId: null,
+		position: {
+			x: -1e4,
+			y: -1e4
+		}
+	}
+}).extendApi(({ setOption, setOptions }) => ({
+	hide: () => {
+		setOptions({
+			openId: null,
+			position: {
+				x: -1e4,
+				y: -1e4
+			}
+		});
+	},
+	show: (id, position) => {
+		if (position) setOptions({
+			openId: id,
+			position
+		});
+		else setOption("openId", id);
+	}
+})).extendApi(({ api, editor }) => ({ showContextMenu: (blockId, position) => {
+	editor.getApi({ key: KEYS.blockSelection }).blockSelection?.set(blockId);
+	api.blockMenu.show(BLOCK_CONTEXT_MENU_ID, position);
+} })).extend(({ api }) => ({ handlers: { onMouseDown: ({ event, getOptions }) => {
+	if (event.button === 0 && getOptions().openId) {
+		event.preventDefault();
+		api.blockMenu.hide();
+	}
+	if (event.button === 2) event.preventDefault();
+} } }));
+
+//#endregion
+//#region src/internal/transforms/selectBlocks.ts
+const selectBlocks = (editor, at) => {
+	const blockSelection = editor.getApi(BlockSelectionPlugin).blockSelection.getNodes();
+	const entry = editor.api.node(at);
+	if (!entry) return;
+	const [element, path] = entry;
+	const ids = (blockSelection.length > 0 ? blockSelection : editor.api.blocks({
+		mode: "lowest",
+		match: (_, p) => p.length === path.length
+	})).map((block) => block[0].id);
+	editor.getApi(BlockSelectionPlugin).blockSelection.set(ids.includes(element.id) ? ids : [element.id]);
+};
+
+//#endregion
+//#region src/react/hooks/useBlockSelectable.ts
+/** Add block selection when right click on a block. */
+const addOnContextMenu = (editor, { disabledWhenFocused = true, element, event }) => {
+	const { enableContextMenu, selectedIds } = editor.getOptions(BlockSelectionPlugin);
+	if (!enableContextMenu) return;
+	if (editor.selection?.focus && disabledWhenFocused) {
+		const nodeEntry = editor.api.above();
+		const elementPath = editor.api.findPath(element);
+		if (nodeEntry && elementPath && PathApi.isCommon(elementPath, nodeEntry[1])) {
+			const id$1 = nodeEntry[0].id;
+			const isSelected = editor.getOption(BlockSelectionPlugin, "isSelected", id$1);
+			const isOpenAlways = event.target.dataset?.plateOpenContextMenu === "true";
+			/**
+			* When "block selected or is void or has openContextMenu props", right
+			* click can always open the context menu.
+			*/
+			if (!isSelected && !editor.api.isVoid(nodeEntry[0]) && !isOpenAlways) return event.stopPropagation();
+		}
+	}
+	const id = element.id;
+	if (id) {
+		if (event?.shiftKey) editor.getApi(BlockSelectionPlugin).blockSelection.add(id);
+		else if (!selectedIds?.has(id)) editor.setOption(BlockSelectionPlugin, "selectedIds", new Set([id]));
+	}
+};
+const useBlockSelectable = () => {
+	const $ = c(6);
+	const element = useElement();
+	const path = usePath();
+	let t0;
+	if ($[0] === Symbol.for("react.memo_cache_sentinel")) {
+		t0 = { key: KEYS.blockSelection };
+		$[0] = t0;
+	} else t0 = $[0];
+	const { api, editor } = useEditorPlugin(t0);
+	let t1;
+	if ($[1] !== api.blockSelection || $[2] !== editor || $[3] !== element || $[4] !== path) {
+		t1 = { props: api.blockSelection?.isSelectable(element, path) ? {
+			className: "slate-selectable",
+			onContextMenu: (event) => addOnContextMenu(editor, {
+				element,
+				event
+			})
+		} : {} };
+		$[1] = api.blockSelection;
+		$[2] = editor;
+		$[3] = element;
+		$[4] = path;
+		$[5] = t1;
+	} else t1 = $[5];
+	return t1;
+};
+
+//#endregion
+//#region src/react/hooks/useBlockSelected.ts
+const useBlockSelected = (_id) => {
+	const { id } = useElement();
+	return usePluginOption(BlockSelectionPlugin, "isSelected", _id ?? id);
+};
+
+//#endregion
+//#region src/react/hooks/useBlockSelectionNodes.ts
+function useBlockSelectionNodes() {
+	const $ = c(5);
+	const editor = useEditorRef();
+	const selectedIds = usePluginOption(BlockSelectionPlugin, "selectedIds");
+	let t0;
+	if ($[0] !== editor.api || $[1] !== selectedIds) {
+		let t1;
+		if ($[3] !== selectedIds) {
+			t1 = (n) => !!n.id && selectedIds?.has(n.id);
+			$[3] = selectedIds;
+			$[4] = t1;
+		} else t1 = $[4];
+		t0 = editor.api.blocks({
+			at: [],
+			match: t1
+		});
+		$[0] = editor.api;
+		$[1] = selectedIds;
+		$[2] = t0;
+	} else t0 = $[2];
+	return t0;
+}
+function useBlockSelectionFragment() {
+	const $ = c(2);
+	const nodes = useBlockSelectionNodes();
+	let t0;
+	if ($[0] !== nodes) {
+		t0 = nodes.map(_temp$1);
+		$[0] = nodes;
+		$[1] = t0;
+	} else t0 = $[1];
+	return t0;
+}
+function _temp$1(t0) {
+	const [node] = t0;
+	return node;
+}
+function useBlockSelectionFragmentProp(options) {
+	const $ = c(4);
+	const editor = useEditorRef();
+	const fragment = useBlockSelectionFragment();
+	let t0;
+	if ($[0] !== editor.api || $[1] !== fragment || $[2] !== options) {
+		t0 = editor.api.prop({
+			nodes: fragment,
+			...options
+		});
+		$[0] = editor.api;
+		$[1] = fragment;
+		$[2] = options;
+		$[3] = t0;
+	} else t0 = $[3];
+	return t0;
+}
+
+//#endregion
+//#region src/react/CursorOverlayPlugin.tsx
+const getRemoveCursorHandler = (id) => ({ api }) => {
+	api.cursorOverlay.removeCursor(id);
+};
+const CursorOverlayPlugin = createTPlatePlugin({
+	key: KEYS.cursorOverlay,
+	editOnly: { render: false },
+	options: { cursors: {} }
+}).extendApi(({ editor, plugin }) => ({
+	addCursor: (id, cursor) => {
+		const newCursors = { ...editor.getOptions(plugin).cursors };
+		newCursors[id] = {
+			id,
+			...cursor
+		};
+		editor.setOption(plugin, "cursors", newCursors);
+	},
+	removeCursor: (id) => {
+		const newCursors = { ...editor.getOptions(plugin).cursors };
+		if (!newCursors[id]) return;
+		delete newCursors[id];
+		editor.setOption(plugin, "cursors", newCursors);
+	}
+})).overrideEditor(({ api, editor, getOptions, tf: { setSelection } }) => ({ transforms: { setSelection(props) {
+	if (getOptions().cursors?.selection) setTimeout(() => {
+		api.cursorOverlay.addCursor("selection", { selection: editor.selection });
+	}, 0);
+	setSelection(props);
+} } })).extend(() => ({
+	handlers: {
+		onBlur: ({ api, editor, event }) => {
+			if (!editor.selection) return;
+			if (!(event.relatedTarget?.dataset?.plateFocus === "true")) return;
+			api.cursorOverlay.addCursor("selection", { selection: editor.selection });
+		},
+		onDragEnd: getRemoveCursorHandler("drag"),
+		onDragLeave: getRemoveCursorHandler("drag"),
+		onDragOver: ({ api, editor, event }) => {
+			if (!editor.plugins.dnd || editor.getOptions({ key: KEYS.dnd }).isDragging) return;
+			if ((event.dataTransfer?.types || []).some((type) => type.startsWith("Files"))) return;
+			const range = editor.api.findEventRange(event);
+			if (!range) return;
+			api.cursorOverlay.addCursor("drag", { selection: range });
+		},
+		onDrop: getRemoveCursorHandler("drag"),
+		onFocus: getRemoveCursorHandler("selection")
+	},
+	useHooks: ({ api, setOption }) => {
+		const isSelecting$1 = usePluginOption(BlockSelectionPlugin, "isSelecting");
+		useEffect(() => {
+			if (isSelecting$1) setTimeout(() => {
+				api.cursorOverlay.removeCursor("selection");
+			}, 0);
+		}, [
+			isSelecting$1,
+			setOption,
+			api.cursorOverlay
+		]);
+	}
+}));
+
+//#endregion
+//#region src/react/queries/getCaretPosition.ts
+/** Get the caret position of a range from selectionRects. */
+const getCaretPosition = (selectionRects, range) => {
+	const isCollapsed = range && RangeApi.isCollapsed(range);
+	const isBackward = range && RangeApi.isBackward(range);
+	const anchorRect = selectionRects[isBackward ? 0 : selectionRects.length - 1];
+	if (!anchorRect) return null;
+	return {
+		height: anchorRect.height,
+		left: anchorRect.left + (isBackward || isCollapsed ? 0 : anchorRect.width),
+		top: anchorRect.top
+	};
+};
+
+//#endregion
+//#region src/react/queries/getCursorOverlayState.ts
+/** Get cursor overlay state from selection rects. */
+const getCursorOverlayState = ({ cursors: cursorStates, selectionRects }) => {
+	if (!cursorStates) return [];
+	return Object.entries(cursorStates).map(([key, cursorState]) => {
+		const selection = cursorState?.selection ?? null;
+		const rects = selectionRects[key] ?? FROZEN_EMPTY_ARRAY;
+		const caretPosition = selection ? getCaretPosition(rects, selection) : null;
+		return {
+			...cursorState,
+			caretPosition,
+			selection,
+			selectionRects: rects
+		};
+	});
+};
+
+//#endregion
+//#region src/react/queries/getSelectionRects.ts
+const getSelectionRects = (editor, { range, xOffset, yOffset }) => {
+	const [start, end] = RangeApi.edges(range);
+	const domRange = editor.api.toDOMRange(range);
+	if (!domRange) return [];
+	const selectionRects = [];
+	const textEntries = editor.api.nodes({
+		at: range,
+		match: TextApi.isText
+	});
+	for (const [textNode, textPath] of textEntries) {
+		const domNode = editor.api.toDOMNode(textNode);
+		if (!domNode?.parentElement) return [];
+		const isStartNode = PathApi.equals(textPath, start.path);
+		const isEndNode = PathApi.equals(textPath, end.path);
+		let clientRects = null;
+		if (isStartNode || isEndNode) {
+			const nodeRange = document.createRange();
+			nodeRange.selectNode(domNode);
+			if (isStartNode) nodeRange.setStart(domRange.startContainer, domRange.startOffset);
+			if (isEndNode) nodeRange.setEnd(domRange.endContainer, domRange.endOffset);
+			clientRects = nodeRange.getClientRects();
+		} else clientRects = domNode.getClientRects();
+		for (let i = 0; i < clientRects.length; i++) {
+			const clientRect = clientRects.item(i);
+			if (!clientRect) continue;
+			selectionRects.push({
+				height: clientRect.height,
+				left: clientRect.left - xOffset,
+				top: clientRect.top - yOffset,
+				width: clientRect.width
+			});
+		}
+	}
+	return selectionRects;
+};
+
+//#endregion
+//#region src/react/hooks/useRequestReRender.ts
+const useRequestReRender = () => {
+	const [, setUpdateCounter] = React.useState(0);
+	const animationFrameRef = React.useRef(null);
+	const requestReRender = React.useCallback((immediate = false) => {
+		if (animationFrameRef.current && !immediate) return;
+		if (!immediate) {
+			animationFrameRef.current = requestAnimationFrame(() => {
+				setUpdateCounter((state) => state + 1);
+				animationFrameRef.current = null;
+			});
+			return;
+		}
+		if (animationFrameRef.current) {
+			cancelAnimationFrame(animationFrameRef.current);
+			animationFrameRef.current = null;
+		}
+		setUpdateCounter((state_0) => state_0 + 1);
+	}, []);
+	React.useEffect(() => {
+		if (animationFrameRef.current) {
+			cancelAnimationFrame(animationFrameRef.current);
+			animationFrameRef.current = null;
+		}
+	});
+	React.useEffect(() => () => {
+		if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+	}, []);
+	return requestReRender;
+};
+
+//#endregion
+//#region src/react/hooks/useRefreshOnResize.ts
+const useRefreshOnResize = ({ containerRef, refreshOnResize, selectionRectCache }) => {
+	const requestReRender = useRequestReRender();
+	const refresh = React.useCallback((sync = false) => {
+		selectionRectCache.current = /* @__PURE__ */ new WeakMap();
+		requestReRender(sync);
+	}, [requestReRender, selectionRectCache]);
+	React.useEffect(() => {
+		if (!refreshOnResize || !containerRef?.current) return;
+		const resizeObserver = new ResizeObserver(() => refresh());
+		resizeObserver.observe(containerRef.current);
+		return () => resizeObserver.disconnect();
+	}, [
+		containerRef,
+		refresh,
+		refreshOnResize
+	]);
+	return { refresh };
+};
+
+//#endregion
+//#region src/react/hooks/useCursorOverlay.ts
+const FROZEN_EMPTY_ARRAY = Object.freeze([]);
+const useCursorOverlay = (t0) => {
+	const $ = c(21);
+	let t1;
+	if ($[0] !== t0) {
+		t1 = t0 === void 0 ? {} : t0;
+		$[0] = t0;
+		$[1] = t1;
+	} else t1 = $[1];
+	const { minSelectionWidth: t2, refreshOnResize: t3 } = t1;
+	const minSelectionWidth = t2 === void 0 ? 1 : t2;
+	const refreshOnResize = t3 === void 0 ? true : t3;
+	const editor = useEditorRef();
+	const containerRef = useEditorContainerRef();
+	const cursorStates = usePluginOption(CursorOverlayPlugin, "cursors");
+	let t4;
+	if ($[2] === Symbol.for("react.memo_cache_sentinel")) {
+		t4 = /* @__PURE__ */ new WeakMap();
+		$[2] = t4;
+	} else t4 = $[2];
+	const selectionRectCache = React.useRef(t4);
+	let t5;
+	if ($[3] === Symbol.for("react.memo_cache_sentinel")) {
+		t5 = {};
+		$[3] = t5;
+	} else t5 = $[3];
+	const [selectionRects, setSelectionRects] = React.useState(t5);
+	let t6;
+	if ($[4] !== containerRef || $[5] !== cursorStates || $[6] !== editor || $[7] !== minSelectionWidth || $[8] !== selectionRects) {
+		t6 = () => {
+			if (!containerRef?.current) return;
+			if (!cursorStates) return;
+			let xOffset = 0;
+			let yOffset = 0;
+			if (containerRef) {
+				const contentRect = containerRef.current.getBoundingClientRect();
+				xOffset = contentRect.x;
+				yOffset = contentRect.y;
+				yOffset = yOffset - containerRef.current.scrollTop;
+			}
+			let selectionRectsChanged = Object.keys(selectionRects).length !== Object.keys(cursorStates).length;
+			const getCachedSelectionRects = (t7$1) => {
+				const { cursor } = t7$1;
+				const range = cursor.selection;
+				if (!range) return FROZEN_EMPTY_ARRAY;
+				const cached = selectionRectCache.current.get(range);
+				if (cached) return cached;
+				const rects = getSelectionRects(editor, {
+					range,
+					xOffset,
+					yOffset
+				}).map((rect) => {
+					if (rect.width < minSelectionWidth) return {
+						...rect,
+						left: rect.left - (minSelectionWidth - rect.width) / 2,
+						width: minSelectionWidth
+					};
+					return rect;
+				});
+				selectionRectsChanged = true;
+				selectionRectCache.current.set(range, rects);
+				return rects;
+			};
+			const updated = Object.fromEntries(Object.entries(cursorStates).map((t8$1) => {
+				const [key, cursor_0] = t8$1;
+				return [key, getCachedSelectionRects({ cursor: cursor_0 })];
+			}));
+			if (selectionRectsChanged) setSelectionRects(updated);
+		};
+		$[4] = containerRef;
+		$[5] = cursorStates;
+		$[6] = editor;
+		$[7] = minSelectionWidth;
+		$[8] = selectionRects;
+		$[9] = t6;
+	} else t6 = $[9];
+	const updateSelectionRects = t6;
+	let t7;
+	if ($[10] !== updateSelectionRects) {
+		t7 = () => {
+			updateSelectionRects();
+		};
+		$[10] = updateSelectionRects;
+		$[11] = t7;
+	} else t7 = $[11];
+	useIsomorphicLayoutEffect(t7);
+	let t8;
+	if ($[12] !== cursorStates || $[13] !== selectionRects) {
+		t8 = getCursorOverlayState({
+			cursors: cursorStates,
+			selectionRects
+		});
+		$[12] = cursorStates;
+		$[13] = selectionRects;
+		$[14] = t8;
+	} else t8 = $[14];
+	const cursors = t8;
+	let t9;
+	if ($[15] !== containerRef || $[16] !== refreshOnResize) {
+		t9 = {
+			containerRef,
+			refreshOnResize,
+			selectionRectCache
+		};
+		$[15] = containerRef;
+		$[16] = refreshOnResize;
+		$[17] = t9;
+	} else t9 = $[17];
+	const { refresh } = useRefreshOnResize(t9);
+	let t10;
+	if ($[18] !== cursors || $[19] !== refresh) {
+		t10 = {
+			cursors,
+			refresh
+		};
+		$[18] = cursors;
+		$[19] = refresh;
+		$[20] = t10;
+	} else t10 = $[20];
+	return t10;
+};
+
+//#endregion
+//#region src/react/hooks/useIsSelecting.ts
+const isSelectingOrFocused = (editor) => isSelecting(editor) || editor.api.isFocused();
+const useIsSelecting = () => {
+	const $ = c(1);
+	const isSelectingSome = usePluginOption(BlockSelectionPlugin, "isSelectingSome");
+	let t0;
+	if ($[0] === Symbol.for("react.memo_cache_sentinel")) {
+		t0 = [];
+		$[0] = t0;
+	} else t0 = $[0];
+	return useEditorSelector(_temp, t0) || isSelectingSome;
+};
+function _temp(editor) {
+	return editor.api.isExpanded();
+}
+
+//#endregion
+//#region src/internal/EventEmitter.ts
+var EventTarget = class {
+	_listeners = /* @__PURE__ */ new Map();
+	emit = this.dispatchEvent;
+	off = this.removeEventListener;
+	on = this.addEventListener;
+	addEventListener(event, cb) {
+		const set = this._listeners.get(event) ?? /* @__PURE__ */ new Set();
+		this._listeners.set(event, set);
+		set.add(cb);
+		return this;
+	}
+	dispatchEvent(event, ...data) {
+		let ok = true;
+		for (const cb of this._listeners.get(event) ?? []) ok = cb(...data) !== false && ok;
+		return ok;
+	}
+	removeEventListener(event, cb) {
+		this._listeners.get(event)?.delete(cb);
+		return this;
+	}
+	unbindAllListeners() {
+		this._listeners.clear();
+	}
+};
+
+//#endregion
+//#region src/internal/utils/css.ts
+const unitify = (val, unit = "px") => typeof val === "number" ? val + unit : val;
+/**
+* Add css to a DOM-Element or returns the current value of a property.
+*
+* @param el The Element.
+* @param attr The attribute or an object which holds css key-properties.
+* @param val The value for a single attribute.
+* @returns {any}
+*/
+function css({ style }, attr, val) {
+	if (typeof attr === "object") {
+		for (const [key, value] of Object.entries(attr)) if (value !== void 0) style[key] = unitify(value);
+	} else if (val !== void 0) style[attr] = unitify(val);
+}
+
+//#endregion
+//#region src/internal/utils/events.ts
+const eventListener = (method) => (items, events, fn, options = {}) => {
+	let normalizedItems;
+	if (items instanceof HTMLCollection || items instanceof NodeList) normalizedItems = Array.from(items);
+	else if (Array.isArray(items)) normalizedItems = items;
+	else normalizedItems = [items];
+	let normalizedEvents;
+	if (Array.isArray(events)) normalizedEvents = events;
+	else normalizedEvents = [events];
+	for (const el of normalizedItems) if (el) for (const ev of normalizedEvents) el[method](ev, fn, {
+		capture: false,
+		...options
+	});
+	return [
+		normalizedItems,
+		normalizedEvents,
+		fn,
+		options
+	];
+};
+/**
+* Add event(s) to element(s).
+*
+* @param elements DOM-Elements
+* @param events Event names
+* @param fn Callback
+* @param options Optional options
+* @returns Array passed arguments
+*/
+const on = eventListener("addEventListener");
+/**
+* Remove event(s) from element(s).
+*
+* @param elements DOM-Elements
+* @param events Event names
+* @param fn Callback
+* @param options Optional options
+* @returns Array passed arguments
+*/
+const off = eventListener("removeEventListener");
+/**
+* Simplifies a touch / mouse-event
+*
+* @param evt
+*/
+const simplifyEvent = (evt) => {
+	const { clientX, clientY, target } = evt.touches?.[0] ?? evt;
+	return {
+		target,
+		x: clientX,
+		y: clientY
+	};
+};
+
+//#endregion
+//#region src/internal/utils/intersects.ts
+function intersectsScroll(a, b, _, container) {
+	const containerRect = container.getBoundingClientRect();
+	const scrollLeft = container.scrollLeft;
+	const scrollTop = container.scrollTop;
+	return a.right >= b.left - containerRect.left && a.left + containerRect.left <= b.right + scrollLeft && a.bottom - scrollTop >= b.top - containerRect.top && a.top <= b.bottom - containerRect.top + scrollTop;
+}
+
+//#endregion
+//#region src/internal/utils/selectAll.ts
+/**
+* Takes a selector (or array of selectors) and returns the matched nodes.
+*
+* @param selector The selector or an Array of selectors.
+* @param doc
+* @returns {Array} Array of DOM-Nodes.
+*/
+function selectAll(selector, doc = document) {
+	const list = Array.isArray(selector) ? selector : [selector];
+	let nodes = [];
+	for (let i = 0, l = list.length; i < l; i++) {
+		const item = list[i];
+		if (typeof item === "string")
+ /**
+		* We can't use the spread operator here as with large amounts of elements
+		* we'll get a "Maximum call stack size exceeded"-error.
+		*/
+		nodes = nodes.concat(Array.from(doc.querySelectorAll(item)));
+		else if (item instanceof Element) nodes.push(item);
+	}
+	return nodes;
+}
+
+//#endregion
+//#region src/internal/utils/constants.ts
+const isTouchDevice = () => matchMedia("(hover: none), (pointer: coarse)").matches;
+const isSafariBrowser = () => "safari" in window;
+
+//#endregion
+//#region src/internal/utils/frames.ts
+const frames = (fn) => {
+	let previousArgs;
+	let frameId = -1;
+	let lock = false;
+	return {
+		cancel() {
+			cancelAnimationFrame(frameId);
+			lock = false;
+		},
+		next(...args) {
+			previousArgs = args;
+			if (!lock) {
+				lock = true;
+				frameId = requestAnimationFrame(() => {
+					fn(...previousArgs);
+					lock = false;
+				});
+			}
+		}
+	};
+};
+
+//#endregion
+//#region src/internal/utils/shouldTrigger.ts
+/**
+* Determines whether a MouseEvent should execute until completion depending on
+* which button and modifier(s) are active for the MouseEvent. The Event will
+* execute to completion if ANY of the triggers "matches"
+*
+* @param event MouseEvent that should be checked
+* @param triggers A list of Triggers that signify that the event should execute
+*   until completion
+* @returns Whether the MouseEvent should execute until completion
+*/
+function shouldTrigger(event, triggers) {
+	for (const trigger of triggers) {
+		if (typeof trigger === "number") return event.button === trigger;
+		if (typeof trigger === "object") {
+			const reqButtonIsPressed = trigger.button === event.button;
+			const allReqModifiersArePressed = trigger.modifiers.every((modifier) => {
+				switch (modifier) {
+					case "alt": return event.altKey;
+					case "ctrl": return event.ctrlKey || event.metaKey;
+					case "shift": return event.shiftKey;
+					default: return false;
+				}
+			});
+			return reqButtonIsPressed && allReqModifiersArePressed;
+		}
+	}
+	return false;
+}
+
+//#endregion
+//#region src/internal/SelectionArea.ts
+const { abs, ceil, max, min } = Math;
+var SelectionArea = class extends EventTarget {
+	_area;
+	_areaClientLocation = {
+		x1: 0,
+		x2: 0,
+		y1: 0,
+		y2: 0
+	};
+	_areaLocation = {
+		x1: 0,
+		x2: 0,
+		y1: 0,
+		y2: 0
+	};
+	_areaRect = new DOMRect();
+	_container;
+	_containerRect;
+	_frame;
+	_initScrollDelta = {
+		x: 0,
+		y: 0
+	};
+	_latestElement;
+	_options;
+	_scrollAvailable = true;
+	_scrollDelta = {
+		x: 0,
+		y: 0
+	};
+	_scrollingActive = false;
+	_scrollSpeed = {
+		x: 0,
+		y: 0
+	};
+	_selectables = [];
+	_selection = {
+		changed: {
+			added: [],
+			removed: []
+		},
+		selected: [],
+		stored: [],
+		touched: []
+	};
+	_singleClick = true;
+	wheelTimer = null;
+	disable = this._bindStartEvents.bind(this, false);
+	enable = this._bindStartEvents;
+	constructor(opt) {
+		super();
+		this._options = {
+			boundaries: ["html"],
+			container: "body",
+			document: window.document,
+			selectables: [],
+			selectionAreaClass: "selection-area",
+			startAreas: ["html"],
+			...opt,
+			behaviour: {
+				intersect: "touch",
+				overlap: "invert",
+				triggers: [0],
+				...opt.behaviour,
+				scrolling: {
+					manualSpeed: 750,
+					speedDivider: .7,
+					...opt.behaviour?.scrolling,
+					startScrollMargins: {
+						x: 20,
+						y: 40,
+						...opt.behaviour?.scrolling?.startScrollMargins
+					}
+				},
+				startThreshold: opt.behaviour?.startThreshold ? typeof opt.behaviour.startThreshold === "number" ? opt.behaviour.startThreshold : {
+					x: 4,
+					y: 4,
+					...opt.behaviour.startThreshold
+				} : {
+					x: 4,
+					y: 4
+				}
+			},
+			features: {
+				range: true,
+				touch: true,
+				...opt.features,
+				singleTap: {
+					allow: true,
+					intersect: "native",
+					...opt.features?.singleTap
+				}
+			}
+		};
+		for (const key of Object.getOwnPropertyNames(Object.getPrototypeOf(this))) if (typeof this[key] === "function") this[key] = this[key].bind(this);
+		const { document: document$1, selectionAreaClass } = this._options;
+		this._area = document$1.createElement("div");
+		this._area.classList.add(selectionAreaClass);
+		css(this._area, {
+			left: 0,
+			position: "absolute",
+			top: 0,
+			willChange: "top, left, bottom, right, width, height"
+		});
+		this._frame = frames((evt) => {
+			this._recalculateSelectionAreaRect();
+			this._updateElementSelection();
+			this._emitEvent("move", evt);
+			this._redrawSelectionArea();
+		});
+		this.enable();
+	}
+	_bindStartEvents(activate = true) {
+		const { document: document$1, features } = this._options;
+		const fn = activate ? on : off;
+		fn(document$1, "mousedown", this._onTapStart);
+		if (features.touch) fn(document$1, "touchstart", this._onTapStart, { passive: false });
+	}
+	_delayedTapMove(evt) {
+		const { behaviour: { startThreshold }, document: document$1 } = this._options;
+		const { x1, y1 } = this._areaLocation;
+		const { x1: clientX, y1: clientY } = this._areaClientLocation;
+		const { x, y } = simplifyEvent(evt);
+		if (typeof startThreshold === "number" && abs(x + y - (clientX + clientY)) >= startThreshold || typeof startThreshold === "object" && abs(x - x1) >= startThreshold.x || abs(y - y1) >= startThreshold.y) {
+			off(document$1, ["mousemove", "touchmove"], this._delayedTapMove, { passive: false });
+			if (this._emitEvent("beforedrag", evt) === false) {
+				off(document$1, [
+					"mouseup",
+					"touchcancel",
+					"touchend"
+				], this._onTapStop);
+				return;
+			}
+			on(document$1, ["mousemove", "touchmove"], this._onTapMove, { passive: false });
+			css(this._area, "display", "block");
+			this._container.append(this._area);
+			this.resolveSelectables();
+			this._singleClick = false;
+			on(this._container, "wheel", this._manualScroll, { passive: true });
+			this._setupSelectionArea();
+			this._emitEvent("start", evt);
+			this._onTapMove(evt);
+		}
+		this._handleMoveEvent(evt);
+	}
+	_emitEvent(name, evt) {
+		return this.emit(name, {
+			event: evt,
+			selection: this,
+			store: this._selection
+		});
+	}
+	_handleMoveEvent(evt) {
+		const { features } = this._options;
+		/**
+		* - Prevent auto-refresh for when pulling down on touch devices.
+		* - Prevent auto-scroll by the browser when on safari and scrolling is
+		*   handled by viselect.
+		*/
+		if (features.touch && isTouchDevice() || this._scrollAvailable && isSafariBrowser()) evt.preventDefault();
+	}
+	_keepSelection() {
+		const { _options, _selection } = this;
+		const { changed, selected, stored, touched } = _selection;
+		const addedElements = selected.filter((el) => !stored.includes(el));
+		switch (_options.behaviour.overlap) {
+			case "drop":
+				_selection.stored = [...addedElements, ...stored.filter((el) => !touched.includes(el))];
+				break;
+			case "invert":
+				_selection.stored = [...addedElements, ...stored.filter((el) => !changed.removed.includes(el))];
+				break;
+			case "keep":
+				_selection.stored = [...stored, ...selected.filter((el) => !stored.includes(el))];
+				break;
+		}
+	}
+	_manualScroll(evt) {
+		if (this.wheelTimer) clearTimeout(this.wheelTimer);
+		const { x, y } = simplifyEvent(evt);
+		this.wheelTimer = setTimeout(() => {
+			this._areaClientLocation.x2 = x;
+			this._areaClientLocation.y2 = y;
+			const Ry = y - this._containerRect.top;
+			const Rx = x - this._containerRect.left;
+			this._areaLocation.x2 = Rx + this._container.scrollLeft;
+			this._areaLocation.y2 = Ry + this._container.scrollTop;
+			this._frame.next(null);
+		}, 100);
+	}
+	_onScroll(evt) {
+		const { document: document$1 } = this._options;
+		if (this.wheelTimer) clearTimeout(this.wheelTimer);
+		const { x, y } = simplifyEvent(evt);
+		this.wheelTimer = setTimeout(() => {
+			this._areaClientLocation.x2 = x;
+			this._areaClientLocation.y2 = y;
+			const deltaY = y - this._containerRect.top + this._container.scrollTop + document$1.scrollingElement.scrollTop - this._initScrollDelta.y;
+			const deltaX = x - this._containerRect.left + this._container.scrollLeft + document$1.scrollingElement.scrollLeft;
+			this._scrollDelta.y = document$1.scrollingElement.scrollTop - this._initScrollDelta.y;
+			this._scrollDelta.x = document$1.scrollingElement.scrollLeft - this._initScrollDelta.x;
+			this._areaLocation.y2 = deltaY;
+			this._areaLocation.x2 = deltaX;
+			this._frame.next(null);
+		}, 100);
+	}
+	_onSingleTap(evt) {
+		const { range, singleTap: { intersect } } = this._options.features;
+		const e = simplifyEvent(evt);
+		let target;
+		if (intersect === "native") target = e.target;
+		else if (intersect === "touch") {
+			this.resolveSelectables();
+			const { x, y } = e;
+			target = this._selectables.find((v) => {
+				const { bottom, left, right, top } = v.getBoundingClientRect();
+				return x < right && x > left && y < bottom && y > top;
+			});
+		}
+		if (!target) return;
+		/**
+		* Resolve selectables again. If the user started in a scrollable area they
+		* will be reduced to the current area. Prevent the exclusion of these if a
+		* range-selection gets performed.
+		*/
+		this.resolveSelectables();
+		while (!this._selectables.includes(target)) {
+			if (!target.parentElement) return;
+			target = target.parentElement;
+		}
+		const { stored } = this._selection;
+		this._emitEvent("start", evt);
+		if (evt.shiftKey && range && this._latestElement) {
+			const reference = this._latestElement;
+			const [preceding, following] = reference.compareDocumentPosition(target) & 4 ? [target, reference] : [reference, target];
+			const rangeItems = [
+				...this._selectables.filter((el) => el.compareDocumentPosition(preceding) & 4 && el.compareDocumentPosition(following) & 2),
+				preceding,
+				following
+			];
+			this.select(rangeItems);
+			this._latestElement = reference;
+		} else if (stored.includes(target) && (stored.length === 1 || evt.ctrlKey || stored.every((v) => this._selection.stored.includes(v)))) this.deselect(target);
+		else {
+			this.select(target);
+			this._latestElement = target;
+		}
+	}
+	_onTapMove(evt) {
+		const { x, y } = simplifyEvent(evt);
+		const { _areaClientLocation, _areaLocation, _frame, _options, _scrollSpeed } = this;
+		const { speedDivider } = _options.behaviour.scrolling;
+		const Ry = y - this._containerRect.top;
+		const Rx = x - this._containerRect.left;
+		if (this._scrollAvailable && !this._scrollingActive && (_scrollSpeed.y || _scrollSpeed.x)) {
+			this._scrollingActive = true;
+			const scroll = () => {
+				if (!_scrollSpeed.x && !_scrollSpeed.y) {
+					this._scrollingActive = false;
+					return;
+				}
+				if (_scrollSpeed.y) {
+					this._container.scrollTop += ceil(_scrollSpeed.y / speedDivider);
+					_areaLocation.y2 = Ry;
+				}
+				if (_scrollSpeed.x) {
+					this._container.scrollLeft += ceil(_scrollSpeed.x / speedDivider);
+					_areaLocation.x2 = Rx;
+				}
+				/**
+				* We changed the start coordinates -> redraw the selection-area We
+				* changed the dimensions of the area element -> re-calc selected
+				* elements The selected elements array has been changed -> fire event
+				*/
+				_frame.next(evt);
+				requestAnimationFrame(scroll);
+			};
+			requestAnimationFrame(scroll);
+		} else {
+			_areaLocation.x2 = Rx + this._container.scrollLeft + this._scrollDelta.x;
+			_areaLocation.y2 = Ry + this._container.scrollTop + this._scrollDelta.y;
+			_areaClientLocation.x2 = x;
+			_areaClientLocation.y2 = y;
+			/**
+			* Perform redraw only if scrolling is not active. If scrolling is active
+			* this area is getting re-dragged by the anonymize scroll function.
+			*/
+			_frame.next(evt);
+		}
+		this._handleMoveEvent(evt);
+	}
+	_onTapStart(evt, silent = false) {
+		const { container, document: document$1 } = this._options;
+		const { target, x, y } = simplifyEvent(evt);
+		this._container = selectAll(container, document$1)[0];
+		if (!this._container) return;
+		if (this._container.contains(target) && target.dataset.slateEditor !== "true" && target.dataset.plateSelectable !== "true") return;
+		this._containerRect = this._container.getBoundingClientRect();
+		const Rx = x - this._containerRect.left + this._container.scrollLeft;
+		const Ry = y - this._containerRect.top + this._container.scrollTop;
+		const { _options } = this;
+		if (evt instanceof MouseEvent && !shouldTrigger(evt, _options.behaviour.triggers)) return;
+		const startAreas = selectAll(_options.startAreas, _options.document);
+		const resolvedBoundaries = selectAll(_options.boundaries, _options.document);
+		const evtPath = evt.composedPath();
+		if (!this._container || !startAreas.find((el) => evtPath.includes(el)) || !resolvedBoundaries.find((el) => evtPath.includes(el))) return;
+		if (!silent && this._emitEvent("beforestart", evt) === false) return;
+		this._areaLocation = {
+			x1: Rx,
+			x2: 0,
+			y1: Ry,
+			y2: 0
+		};
+		this._areaClientLocation = {
+			x1: x,
+			x2: 0,
+			y1: y,
+			y2: 0
+		};
+		const scrollElement = document$1.scrollingElement ?? document$1.body;
+		this._initScrollDelta = {
+			x: scrollElement.scrollLeft,
+			y: scrollElement.scrollTop
+		};
+		this._singleClick = true;
+		this.clearSelection(false, true);
+		on(document$1, ["touchmove", "mousemove"], this._delayedTapMove, { passive: false });
+		on(document$1, [
+			"mouseup",
+			"touchcancel",
+			"touchend"
+		], this._onTapStop);
+		on(document$1, "wheel", this._onScroll, { passive: false });
+	}
+	_onTapStop(evt, silent) {
+		const { document: document$1, features } = this._options;
+		const { _singleClick } = this;
+		off(document$1, ["mousemove", "touchmove"], this._delayedTapMove);
+		off(document$1, ["touchmove", "mousemove"], this._onTapMove);
+		off(document$1, [
+			"mouseup",
+			"touchcancel",
+			"touchend"
+		], this._onTapStop);
+		off(document$1, "wheel", this._onScroll);
+		this._keepSelection();
+		if (evt && _singleClick && features.singleTap.allow) this._onSingleTap(evt);
+		else if (!_singleClick && !silent) {
+			this._updateElementSelection();
+			this._emitEvent("stop", evt);
+		}
+		this._scrollSpeed.x = 0;
+		this._scrollSpeed.y = 0;
+		this._scrollDelta.x = 0;
+		this._scrollDelta.y = 0;
+		off(this._container, "wheel", this._manualScroll, { passive: true });
+		this._area.remove();
+		this._frame?.cancel();
+		css(this._area, "display", "none");
+	}
+	_recalculateSelectionAreaRect() {
+		const { _areaClientLocation, _areaLocation, _areaRect, _container, _containerRect, _scrollSpeed } = this;
+		const { clientHeight, clientWidth, scrollHeight, scrollLeft, scrollTop, scrollWidth } = _container;
+		const { x1, y1 } = _areaLocation;
+		let { x2, y2 } = _areaLocation;
+		const { behaviour: { scrolling: { startScrollMargins } } } = this._options;
+		if (_areaClientLocation.x2 + this._scrollDelta.x < _containerRect.left + startScrollMargins.x) {
+			_scrollSpeed.x = scrollLeft ? -abs(_containerRect.left - _areaClientLocation.x2 - this._scrollDelta.x) : 0;
+			x2 = max(x2, this._container.scrollLeft);
+		} else if (_areaClientLocation.x2 + this._scrollDelta.x > _containerRect.right - startScrollMargins.x) {
+			_scrollSpeed.x = scrollWidth - scrollLeft - clientWidth ? abs(_containerRect.left + this._container.clientWidth - _areaClientLocation.x2 - this._scrollDelta.x) : 0;
+			x2 = clientWidth + scrollLeft;
+		} else _scrollSpeed.x = 0;
+		if (_areaClientLocation.y2 + this._scrollDelta.y < _containerRect.top + startScrollMargins.y) {
+			_scrollSpeed.y = scrollTop ? -abs(_containerRect.top - _areaClientLocation.y2 - this._scrollDelta.y + startScrollMargins.y) : 0;
+			y2 = max(y2, this._container.scrollTop);
+		} else if (_areaClientLocation.y2 + this._scrollDelta.y > _containerRect.bottom - startScrollMargins.y) {
+			_scrollSpeed.y = scrollHeight - scrollTop - clientHeight ? abs(_areaClientLocation.y2 + this._scrollDelta.y - (_containerRect.top + this._container.clientHeight - startScrollMargins.y)) : 0;
+			y2 = clientHeight + scrollTop;
+		} else _scrollSpeed.y = 0;
+		const x3 = min(x1, x2);
+		const y3 = min(y1, y2);
+		const x4 = max(x1, x2);
+		const y4 = max(y1, y2);
+		_areaRect.x = x3;
+		_areaRect.y = y3;
+		_areaRect.width = x4 - x3;
+		_areaRect.height = y4 - y3;
+	}
+	_redrawSelectionArea() {
+		const { height, width, x, y } = this._areaRect;
+		const { style } = this._area;
+		style.left = `${x}px`;
+		style.top = `${y}px`;
+		style.width = `${width}px`;
+		style.height = `${height}px`;
+	}
+	_setupSelectionArea() {}
+	_updateElementSelection() {
+		const { _areaRect, _options, _selectables, _selection } = this;
+		const { selected, stored, touched } = _selection;
+		const { intersect, overlap } = _options.behaviour;
+		const invert = overlap === "invert";
+		const newlyTouched = [];
+		const added = [];
+		const removed = [];
+		for (let i = 0; i < _selectables.length; i++) {
+			const node = _selectables[i];
+			if (intersectsScroll(_areaRect, node.getBoundingClientRect(), intersect, this._container)) {
+				if (!selected.includes(node)) {
+					if (invert && stored.includes(node)) {
+						removed.push(node);
+						continue;
+					}
+					added.push(node);
+				} else if (stored.includes(node) && !touched.includes(node)) touched.push(node);
+				newlyTouched.push(node);
+			}
+		}
+		if (invert) added.push(...stored.filter((v) => !selected.includes(v)));
+		const keep = overlap === "keep";
+		for (let i = 0; i < selected.length; i++) {
+			const node = selected[i];
+			if (!newlyTouched.includes(node) && !(keep && stored.includes(node))) removed.push(node);
+		}
+		_selection.selected = newlyTouched;
+		_selection.changed = {
+			added,
+			removed
+		};
+		this._latestElement = void 0;
+	}
+	/**
+	* Cancel the current selection process.
+	*
+	* @param keepEvent {boolean} true to fire a stop event after cancel.
+	*/
+	cancel(keepEvent = false) {
+		this._onTapStop(null, !keepEvent);
+	}
+	/**
+	* Same as deselect, but for all elements currently selected.
+	*
+	* @param includeStored If the store should also get cleared
+	* @param quiet If move / stop events should be fired
+	*/
+	clearSelection(includeStored = true, quiet = false) {
+		const { changed, selected, stored } = this._selection;
+		changed.added = [];
+		changed.removed.push(...selected, ...includeStored ? stored : []);
+		if (!quiet) {
+			this._emitEvent("move", null);
+			this._emitEvent("stop", null);
+		}
+		this._selection = {
+			changed: {
+				added: [],
+				removed: []
+			},
+			selected: [],
+			stored: includeStored ? [] : stored,
+			touched: []
+		};
+	}
+	/**
+	* Removes a particular element from the selection.
+	*
+	* @param query - CSS Query, can be an array of queries
+	* @param quiet - If this should not trigger the move event
+	*/
+	deselect(query, quiet = false) {
+		const { changed, selected, stored } = this._selection;
+		const elements = selectAll(query, this._options.document).filter((el) => selected.includes(el) || stored.includes(el));
+		if (elements.length === 0) return;
+		this._selection.stored = stored.filter((el) => !elements.includes(el));
+		this._selection.selected = selected.filter((el) => !elements.includes(el));
+		this._selection.changed.added = [];
+		this._selection.changed.removed.push(...elements.filter((el) => !changed.removed.includes(el)));
+		this._latestElement = void 0;
+		if (!quiet) {
+			this._emitEvent("move", null);
+			this._emitEvent("stop", null);
+		}
+	}
+	/** Unbinds all events and removes the area-element. */
+	destroy() {
+		this.cancel();
+		this.disable();
+		super.unbindAllListeners();
+	}
+	/** @returns {Array} Selected elements */
+	getSelection() {
+		return this._selection.stored;
+	}
+	/** @returns {HTMLElement} The selection area element */
+	getSelectionArea() {
+		return this._area;
+	}
+	/**
+	* Can be used if during a selection elements have been added. Will update
+	* everything which can be selected.
+	*/
+	resolveSelectables() {
+		this._selectables = selectAll(this._options.selectables, this._options.document);
+	}
+	/**
+	* Adds elements to the selection
+	*
+	* @param query - CSS Query, can be an array of queries
+	* @param quiet - If this should not trigger the move event
+	*/
+	select(query, quiet = false) {
+		const { changed, selected, stored } = this._selection;
+		const elements = selectAll(query, this._options.document).filter((el) => !selected.includes(el) && !stored.includes(el));
+		stored.push(...elements);
+		selected.push(...elements);
+		changed.added.push(...elements);
+		changed.removed = [];
+		this._latestElement = void 0;
+		if (!quiet) {
+			this._emitEvent("move", null);
+			this._emitEvent("stop", null);
+		}
+		return elements;
+	}
+	/**
+	* Manually triggers the start of a selection
+	*
+	* @param evt A MouseEvent / TouchEvent -like object
+	* @param silent If beforestart should be fired,
+	*/
+	trigger(evt, silent = true) {
+		this._onTapStart(evt, silent);
+	}
+};
+
+//#endregion
+//#region src/react/hooks/useSelectionArea.ts
+const useSelectionArea = () => {
+	const { api, editor, getOption, getOptions, setOption } = useEditorPlugin(BlockSelectionPlugin);
+	const { areaOptions } = getOptions();
+	const areaRef = React.useRef({ ids: /* @__PURE__ */ new Set() });
+	const trsRef = React.useRef({ ids: /* @__PURE__ */ new Set() });
+	const onStart = () => {
+		if (editor.api.isFocused()) editor.tf.blur();
+		if (editor.selection) editor.tf.deselect();
+		setOption("isSelectionAreaVisible", true);
+	};
+	React.useEffect(() => {
+		const selection = new SelectionArea({
+			boundaries: `#${editor.meta.uid}`,
+			container: `#${editor.meta.uid}`,
+			document: window.document,
+			selectables: `#${editor.meta.uid} .slate-selectable`,
+			selectionAreaClass: "slate-selection-area",
+			...areaOptions
+		}).on("beforestart", () => {
+			setOption("isSelecting", false);
+		}).on("start", ({ event }) => {
+			onStart();
+			if (!event?.shiftKey) {
+				selection.clearSelection();
+				api.blockSelection.clear();
+			}
+		}).on("move", ({ store: { changed } }) => {
+			if (!getOptions().isSelectionAreaVisible) onStart();
+			const apply = () => {
+				if (changed.added.length === 0 && changed.removed.length === 0) return;
+				const next = new Set(getOptions().selectedIds);
+				extractSelectableIds(changed.removed).forEach((id) => {
+					next.delete(id);
+					areaRef.current.ids.delete(id);
+				});
+				new Set(extractSelectableIds(changed.added)).forEach((id) => {
+					const block = editor.api.block({
+						at: [],
+						match: (n) => !!n.id && n.id === id
+					});
+					if (!block) return;
+					if (block[0].type === KEYS.table) return;
+					if (block[1].length === 1) {
+						next.add(id);
+						areaRef.current.ids.add(id);
+						return;
+					}
+					if (!editor.api.block({
+						above: true,
+						at: block[1],
+						match: (n) => !!n.id && areaRef.current.ids.has(n.id)
+					})) {
+						next.add(id);
+						areaRef.current.ids.add(id);
+					}
+				});
+				setOption("selectedIds", next);
+			};
+			const normalize = () => {
+				const next = new Set(getOption("selectedIds"));
+				const ids = Array.from(next);
+				const isTableElement = (element) => element.type === KEYS.table || element.type === KEYS.tr || element.type === KEYS.th;
+				const isTableRowElement = (element) => element.type === KEYS.tr || element.type === KEYS.th;
+				const getBlockById = (id) => editor.api.block({
+					at: [],
+					match: (n) => !!n.id && n.id === id
+				});
+				if (ids.every((id) => {
+					const block = getBlockById(id);
+					if (!block) return false;
+					if (block[1].length >= 3) return true;
+					return isTableElement(block[0]);
+				})) ids.some((id) => {
+					const block = getBlockById(id);
+					if (!block || block[0].type !== KEYS.table) return false;
+					next.delete(id);
+					trsRef.current.ids.forEach((trId) => {
+						next.add(trId);
+					});
+					trsRef.current.ids.clear();
+					return true;
+				});
+				else ids.some((id) => {
+					const block = getBlockById(id);
+					if (!block || !isTableRowElement(block[0])) return false;
+					const table = editor.api.block({
+						above: true,
+						at: block[1]
+					});
+					if (!table) return false;
+					const tableRowIds = table[0].children.map((tr) => tr.id);
+					next.add(table[0].id);
+					tableRowIds.forEach((trId) => {
+						if (next.has(trId)) {
+							trsRef.current.ids.add(trId);
+							next.delete(trId);
+						}
+					});
+					return true;
+				});
+				setOption("selectedIds", next);
+			};
+			apply();
+			normalize();
+		}).on("stop", () => {
+			areaRef.current = { ids: /* @__PURE__ */ new Set() };
+			trsRef.current = { ids: /* @__PURE__ */ new Set() };
+			setOption("isSelectionAreaVisible", false);
+		});
+		return () => selection.destroy();
+	}, []);
+};
+
+//#endregion
+//#region src/react/utils/copySelectedBlocks.ts
+const copySelectedBlocks = (editor) => {
+	const { selectedIds } = editor.getOptions(BlockSelectionPlugin);
+	const selectedEntries = editor.getApi(BlockSelectionPlugin).blockSelection.getNodes({ collapseTableRows: true });
+	const selectedFragment = selectedEntries.map(([node]) => node);
+	copyToClipboard(" ", { onCopy: (dataTransfer) => {
+		const data = dataTransfer;
+		if (!data) return;
+		let textPlain = "";
+		const div = document.createElement("div");
+		editor.tf.withoutNormalizing(() => {
+			selectedEntries.forEach(([, path]) => {
+				editor.tf.select({
+					anchor: editor.api.start(path),
+					focus: editor.api.end(path)
+				});
+				const isEmpty = editor.api.isEmpty(path);
+				if (isEmpty) {
+					const after = editor.api.after(editor.selection);
+					editor.tf.select({
+						anchor: editor.api.start(path),
+						focus: after
+					});
+				}
+				if (!isEmpty) editor.tf.setFragmentData(data);
+				if (isEmpty) textPlain += "\n";
+				else textPlain += `${data.getData("text/plain")}\n`;
+				const divChild = document.createElement("div");
+				if (isEmpty) divChild.innerHTML = "<p></p>";
+				else divChild.innerHTML = data.getData("text/html");
+				div.append(divChild);
+			});
+			editor.tf.deselect();
+			editor.setOption(BlockSelectionPlugin, "selectedIds", selectedIds);
+		});
+		data.setData("text/plain", textPlain);
+		data.setData("text/html", div.innerHTML);
+		const selectedFragmentStr = JSON.stringify(selectedFragment);
+		const encodedFragment = window.btoa(encodeURIComponent(selectedFragmentStr));
+		data.setData("application/x-slate-fragment", encodedFragment);
+	} });
+};
+
+//#endregion
+//#region src/react/utils/selectInsertedBlocks.ts
+/** Select inserted blocks from the last operations. */
+const selectInsertedBlocks = (editor) => {
+	const { setOption } = getEditorPlugin(editor, BlockSelectionPlugin);
+	const ids = /* @__PURE__ */ new Set();
+	editor.operations.forEach((op) => {
+		if (op.type === "insert_node" && op.node.id && editor.api.isBlock(op.node)) ids.add(op.node.id);
+	});
+	setOption("selectedIds", ids);
+};
+
+//#endregion
+//#region src/react/utils/pasteSelectedBlocks.ts
+const pasteSelectedBlocks = (editor, e) => {
+	const { api } = getEditorPlugin(editor, BlockSelectionPlugin);
+	const entries = api.blockSelection.getNodes();
+	if (entries.length > 0) {
+		const [node, path] = entries.at(-1);
+		if (!editor.api.isEmpty(node)) {
+			const at = PathApi.next(path);
+			editor.tf.insertNodes(editor.api.create.block({}, at), {
+				at,
+				select: true
+			});
+		}
+		editor.tf.insertData(e.clipboardData);
+		selectInsertedBlocks(editor);
+	}
+};
+
+//#endregion
+//#region src/react/components/BlockSelectionAfterEditable.tsx
+const BlockSelectionAfterEditable = () => {
+	const editor = useEditorRef();
+	const { api, getOption, getOptions, setOption } = useEditorPlugin({ key: KEYS.blockSelection });
+	const isSelectingSome = usePluginOption(BlockSelectionPlugin, "isSelectingSome");
+	const selectedIds = usePluginOption(BlockSelectionPlugin, "selectedIds");
+	const removeSelectedBlocks = React.useCallback((options = {}) => {
+		const entries = [...editor.api.nodes({
+			at: [],
+			match: (n) => !!n.id && selectedIds?.has(n.id)
+		})];
+		if (entries.length === 0) return null;
+		const firstPath = entries[0][1];
+		editor.tf.withoutNormalizing(() => {
+			for (const [node, path] of [...entries].reverse()) {
+				editor.tf.removeNodes({ at: path });
+				api.blockSelection.delete(node.id);
+			}
+			if (editor.children.length === 0) {
+				editor.meta._forceFocus = true;
+				editor.tf.focus();
+				editor.meta._forceFocus = false;
+			} else if (options.selectPrevious) {
+				const prevPath = PathApi.previous(firstPath);
+				if (prevPath) {
+					const prevEntry = editor.api.block({ at: prevPath });
+					if (prevEntry) setOption("selectedIds", new Set([prevEntry[0].id]));
+				}
+			}
+		});
+		return firstPath;
+	}, [
+		editor,
+		api.blockSelection,
+		selectedIds,
+		setOption
+	]);
+	useSelectionArea();
+	const inputRef = React.useRef(null);
+	const [isMounted, setIsMounted] = React.useState(false);
+	React.useEffect(() => {
+		setIsMounted(true);
+		setOption("shadowInputRef", inputRef);
+		return () => {
+			setIsMounted(false);
+		};
+	}, [setOption]);
+	React.useEffect(() => {
+		if (!isSelectingSome) setOption("anchorId", null);
+	}, [isSelectingSome, setOption]);
+	React.useEffect(() => {
+		if (isSelectingSome && inputRef.current) inputRef.current.focus({ preventScroll: true });
+		else if (inputRef.current) inputRef.current.blur();
+	}, [isSelectingSome]);
+	const handleKeyDown = React.useCallback((e) => {
+		const isReadonly = editor.api.isReadOnly();
+		getOptions().onKeyDownSelecting?.(editor, e.nativeEvent);
+		if (!getOption("isSelectingSome")) return;
+		if (isHotkey("shift+up")(e)) {
+			e.preventDefault();
+			e.stopPropagation();
+			api.blockSelection.shiftSelection("up");
+			return;
+		}
+		if (isHotkey("shift+down")(e)) {
+			e.preventDefault();
+			e.stopPropagation();
+			api.blockSelection.shiftSelection("down");
+			return;
+		}
+		if (isHotkey("escape")(e)) {
+			api.blockSelection.deselect();
+			return;
+		}
+		if (isHotkey("mod+z")(e)) {
+			editor.undo();
+			selectInsertedBlocks(editor);
+			return;
+		}
+		if (isHotkey("mod+a")(e)) {
+			api.blockSelection.selectAll();
+			return;
+		}
+		if (isHotkey("mod+shift+z")(e)) {
+			editor.redo();
+			selectInsertedBlocks(editor);
+			return;
+		}
+		if (isHotkey("mod+d")(e)) {
+			e.preventDefault();
+			editor.getTransforms(BlockSelectionPlugin).blockSelection.duplicate();
+			return;
+		}
+		if (!getOption("isSelectingSome")) return;
+		if (isHotkey("enter")(e)) {
+			const entry = editor.api.node({
+				at: [],
+				block: true,
+				match: (n_0) => !!n_0.id && selectedIds?.has(n_0.id)
+			});
+			if (entry) {
+				const [, path_0] = entry;
+				editor.meta._forceFocus = true;
+				editor.tf.focus({
+					at: path_0,
+					edge: "end"
+				});
+				editor.meta._forceFocus = void 0;
+				e.preventDefault();
+			}
+			return;
+		}
+		if (isHotkey(["backspace", "delete"])(e) && !isReadonly) {
+			e.preventDefault();
+			removeSelectedBlocks({ selectPrevious: isHotkey("backspace")(e) });
+			return;
+		}
+		if (isHotkey("up")(e)) {
+			e.preventDefault();
+			e.stopPropagation();
+			api.blockSelection.moveSelection("up");
+			return;
+		}
+		if (isHotkey("down")(e)) {
+			e.preventDefault();
+			e.stopPropagation();
+			api.blockSelection.moveSelection("down");
+			return;
+		}
+		if (!isReadonly && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+			e.preventDefault();
+			const firstPath_0 = removeSelectedBlocks();
+			if (firstPath_0) {
+				editor.meta._forceFocus = true;
+				editor.tf.insertNodes(editor.api.create.block({ children: [{ text: e.key }] }), { at: firstPath_0 });
+				editor.tf.select(firstPath_0, { edge: "end" });
+				editor.meta._forceFocus = false;
+				editor.tf.focus();
+			}
+			return;
+		}
+	}, [
+		editor,
+		getOptions,
+		getOption,
+		api.blockSelection,
+		removeSelectedBlocks,
+		selectedIds
+	]);
+	/** Handle copy / cut / paste in block selection */
+	const handleCopy = React.useCallback((e_0) => {
+		e_0.preventDefault();
+		if (getOption("isSelectingSome")) copySelectedBlocks(editor);
+	}, [editor, getOption]);
+	const handleCut = React.useCallback((e_1) => {
+		e_1.preventDefault();
+		if (getOption("isSelectingSome")) {
+			copySelectedBlocks(editor);
+			if (!editor.api.isReadOnly()) removeSelectedBlocks();
+		}
+	}, [
+		editor,
+		getOption,
+		removeSelectedBlocks
+	]);
+	const handlePaste = React.useCallback((e_2) => {
+		e_2.preventDefault();
+		if (!editor.api.isReadOnly()) pasteSelectedBlocks(editor, e_2.nativeEvent);
+	}, [editor]);
+	if (!isMounted || typeof window === "undefined") return null;
+	return ReactDOM.createPortal(/* @__PURE__ */ React.createElement("input", {
+		ref: inputRef,
+		className: "slate-shadow-input",
+		style: {
+			left: "-300px",
+			opacity: 0,
+			position: "fixed",
+			top: "-300px",
+			zIndex: 999
+		},
+		onCopy: handleCopy,
+		onCut: handleCut,
+		onKeyDown: handleKeyDown,
+		onPaste: handlePaste
+	}), document.body);
+};
+
+//#endregion
+//#region src/react/internal/api/moveSelection.ts
+const moveSelection = (editor, direction) => {
+	const { api, setOption } = getEditorPlugin$1(editor, BlockSelectionPlugin);
+	const blocks = api.blockSelection.getNodes();
+	if (blocks.length === 0) return;
+	if (direction === "up") {
+		const [, topPath] = blocks[0];
+		const prevEntry = editor.api.previous({
+			at: topPath,
+			from: "parent",
+			match: api.blockSelection.isSelectable
+		});
+		if (prevEntry) {
+			const [prevNode] = prevEntry;
+			setOption("anchorId", prevNode.id);
+			api.blockSelection.set(prevNode.id);
+		} else api.blockSelection.set(blocks[0][0].id);
+	} else {
+		const [, bottomPath] = blocks.at(-1);
+		const nextEntry = editor.api.next({
+			at: bottomPath,
+			from: "child",
+			match: api.blockSelection.isSelectable
+		});
+		if (nextEntry) {
+			const [nextNode] = nextEntry;
+			setOption("anchorId", nextNode.id);
+			api.blockSelection.set(nextNode.id);
+		} else api.blockSelection.set(blocks.at(-1)[0].id);
+	}
+};
+
+//#endregion
+//#region src/react/internal/api/setSelectedIds.ts
+const setSelectedIds = (editor, { added, ids, removed }) => {
+	const { getOptions, setOption } = getEditorPlugin(editor, { key: KEYS.blockSelection });
+	if (ids) setOption("selectedIds", new Set(ids));
+	if (added || removed) {
+		const { selectedIds: prev } = getOptions();
+		const next = new Set(prev);
+		if (added) {
+			for (const id of extractSelectableIds(added)) if (id) next.add(id);
+		}
+		if (removed) {
+			for (const id of extractSelectableIds(removed)) if (id) next.delete(id);
+		}
+		setOption("selectedIds", next);
+	}
+	setOption("isSelecting", true);
+};
+const addSelectedRow = (editor, id, options = {}) => {
+	const { api, getOptions, setOption } = getEditorPlugin(editor, { key: KEYS.blockSelection });
+	const { clear = true, delay } = options;
+	const element = querySelectorSelectable(id);
+	if (!element) return;
+	if (!getOptions().selectedIds.has(id) && clear) setOption("selectedIds", /* @__PURE__ */ new Set());
+	api.blockSelection.setSelectedIds({
+		added: [element],
+		removed: []
+	});
+	if (delay) setTimeout(() => {
+		api.blockSelection.setSelectedIds({
+			added: [],
+			removed: [element]
+		});
+	}, delay);
+};
+
+//#endregion
+//#region src/react/internal/api/shiftSelection.ts
+/**
+* SHIFT-based expand-or-shrink selection.
+*
+* SHIFT + DOWN:
+*
+* - If anchor is top-most in the selection => expand down (add block below
+*   bottom-most).
+* - Otherwise => shrink from top-most (unless top-most is the anchor).
+*
+* SHIFT + UP:
+*
+* - If anchor is bottom-most => expand up (add block above top-most).
+* - Otherwise => shrink from bottom-most (unless bottom-most is the anchor).
+*/
+const shiftSelection = (editor, direction) => {
+	const { api, getOption, getOptions, setOption } = getEditorPlugin$1(editor, BlockSelectionPlugin);
+	const blocks = api.blockSelection.getNodes();
+	if (blocks.length === 0) return;
+	const [topNode, topPath] = blocks[0];
+	const [bottomNode, bottomPath] = blocks.at(-1);
+	let anchorId = getOptions().anchorId;
+	if (!anchorId) {
+		anchorId = direction === "up" ? bottomNode.id : topNode.id;
+		setOption("anchorId", anchorId);
+	}
+	const anchorIndex = blocks.findIndex(([node]) => node.id === anchorId);
+	if (anchorIndex === -1) {
+		setOption("anchorId", bottomNode.id);
+		return;
+	}
+	const anchorIsTop = anchorIndex === 0;
+	const anchorIsBottom = anchorIndex === blocks.length - 1;
+	const newSelected = new Set(getOption("selectedIds"));
+	if (direction === "down") {
+		if (anchorIsTop) {
+			const belowEntry = editor.api.next({
+				at: bottomPath,
+				mode: "highest",
+				match: (n, p) => api.blockSelection.isSelectable(n, p) && !PathApi.isAncestor(p, bottomPath)
+			});
+			if (!belowEntry) return;
+			const [belowNode] = belowEntry;
+			newSelected.add(belowNode.id);
+		} else if (topNode.id && topNode.id !== anchorId) newSelected.delete(topNode.id);
+	} else if (anchorIsBottom) {
+		const aboveEntry = editor.api.previous({
+			at: topPath,
+			from: "parent",
+			match: api.blockSelection.isSelectable
+		});
+		if (!aboveEntry) return;
+		const [aboveNode, abovePath] = aboveEntry;
+		if (PathApi.isAncestor(abovePath, topPath)) newSelected.forEach((id) => {
+			const entry = editor.api.node({
+				id,
+				at: abovePath
+			});
+			if (!entry) return;
+			if (PathApi.isDescendant(entry[1], abovePath)) {
+				newSelected.delete(id);
+				if (id === anchorId) {
+					anchorId = aboveNode.id;
+					setOption("anchorId", anchorId);
+				}
+			}
+		});
+		newSelected.add(aboveNode.id);
+	} else if (bottomNode.id && bottomNode.id !== anchorId) newSelected.delete(bottomNode.id);
+	newSelected.add(anchorId);
+	setOption("selectedIds", newSelected);
+};
+
+//#endregion
+//#region src/react/transforms/duplicateBlockSelectionNodes.ts
+const duplicateBlockSelectionNodes = (editor) => {
+	const blocks = editor.getApi(BlockSelectionPlugin).blockSelection.getNodes();
+	const lastBlock = blocks.at(-1);
+	if (!lastBlock) return;
+	editor.tf.duplicateNodes({ nodes: blocks });
+	const path = PathApi.next(lastBlock[1]);
+	const ids = blocks.map((_, index) => {
+		const targetPath = [path[0] + index];
+		return editor.api.node(targetPath)?.[0].id;
+	}).filter(Boolean);
+	setTimeout(() => {
+		editor.setOption(BlockSelectionPlugin, "selectedIds", new Set(ids));
+	}, 0);
+};
+
+//#endregion
+//#region src/react/transforms/insertBlocksAndSelect.ts
+const insertBlocksAndSelect = (editor, nodes, { at, insertedCallback }) => {
+	editor.tf.insertNodes(nodes, { at });
+	insertedCallback?.();
+	const insertedNodes = [NodeApi.get(editor, at)];
+	let count = 1;
+	while (count < nodes.length) {
+		at = PathApi.next(at);
+		const nextNode = NodeApi.get(editor, at);
+		insertedNodes.push(nextNode);
+		count++;
+	}
+	setTimeout(() => {
+		editor.setOption(BlockSelectionPlugin, "selectedIds", new Set(insertedNodes.map((n) => n.id)));
+	}, 0);
+};
+
+//#endregion
+//#region src/react/transforms/removeBlockSelectionNodes.ts
+const removeBlockSelectionNodes = (editor) => {
+	const selectedIds = editor.getOption(BlockSelectionPlugin, "selectedIds");
+	if (!selectedIds) return;
+	editor.tf.removeNodes({
+		at: [],
+		block: true,
+		match: (n) => !!n.id && selectedIds.has(n.id)
+	});
+};
+
+//#endregion
+//#region src/react/transforms/selectBlockSelectionNodes.ts
+const selectBlockSelectionNodes = (editor) => {
+	editor.tf.select(editor.api.nodesRange(editor.getApi(BlockSelectionPlugin).blockSelection.getNodes()));
+	editor.getApi(BlockSelectionPlugin).blockSelection.clear();
+};
+
+//#endregion
+//#region src/react/transforms/setBlockSelectionNodes.ts
+const setBlockSelectionNodes = (editor, props, options) => {
+	editor.tf.withoutNormalizing(() => {
+		editor.getApi(BlockSelectionPlugin).blockSelection.getNodes().forEach(([, path]) => {
+			editor.tf.setNodes(props, {
+				...options,
+				at: path
+			});
+		});
+	});
+};
+const setBlockSelectionIndent = (editor, indent, options) => {
+	const api = editor.getApi(BlockSelectionPlugin);
+	editor.tf.withoutNormalizing(() => {
+		api.blockSelection.getNodes().forEach(([node, path]) => {
+			const currentIndent = (node.indent ?? 0) + indent;
+			editor.tf.setNodes({ indent: Math.max(currentIndent, 0) }, {
+				...options,
+				at: path
+			});
+		});
+	});
+};
+const setBlockSelectionTexts = (editor, props, options) => {
+	setBlockSelectionNodes(editor, props, {
+		mode: "lowest",
+		...options
+	});
+};
+
+//#endregion
+//#region src/react/BlockSelectionPlugin.tsx
+const BlockSelectionPlugin = createTPlatePlugin({
+	key: KEYS.blockSelection,
+	editOnly: true,
+	handlers: { onMouseDown: ({ api, editor, event, getOptions }) => {
+		const target = event.target;
+		if (target.dataset.platePreventUnselect || target.dataset.platePreventDeselect) return;
+		if (event.button === 0 && getOptions().selectedIds.size > 0 && !editor.getOption(BlockMenuPlugin, "openId")) api.blockSelection.deselect();
+	} },
+	inject: {
+		isBlock: true,
+		nodeProps: { transformProps: () => {
+			return useBlockSelectable().props;
+		} }
+	},
+	options: {
+		anchorId: null,
+		areaOptions: { features: { singleTap: { allow: false } } },
+		enableContextMenu: false,
+		disableSelectAll: false,
+		isSelecting: false,
+		isSelectionAreaVisible: false,
+		selectedIds: /* @__PURE__ */ new Set(),
+		shadowInputRef: { current: null },
+		isSelectable: () => true
+	},
+	plugins: [BlockMenuPlugin],
+	render: { afterEditable: BlockSelectionAfterEditable }
+}).extendSelectors(({ getOptions }) => ({
+	isSelected: (id) => !!id && getOptions().selectedIds.has(id),
+	isSelectingSome: () => getOptions().selectedIds.size > 0
+})).extendApi(({ editor, getOption, getOptions, setOption }) => ({
+	addOnContextMenu: bindFirst(addOnContextMenu, editor),
+	moveSelection: bindFirst(moveSelection, editor),
+	setSelectedIds: bindFirst(setSelectedIds, editor),
+	shiftSelection: bindFirst(shiftSelection, editor),
+	add: (id) => {
+		const next = new Set(getOptions().selectedIds);
+		if (Array.isArray(id)) for (const singleId of id) next.add(singleId);
+		else next.add(id);
+		setOption("selectedIds", next);
+	},
+	clear: () => {
+		setOption("selectedIds", /* @__PURE__ */ new Set());
+	},
+	delete: (id) => {
+		const next = new Set(getOptions().selectedIds);
+		if (Array.isArray(id)) for (const i of id) next.delete(i);
+		else next.delete(id);
+		setOption("selectedIds", next);
+	},
+	deselect: () => {
+		setOption("selectedIds", /* @__PURE__ */ new Set());
+		setOption("isSelecting", false);
+	},
+	first: () => {
+		const selectedIds = getOption("selectedIds");
+		if (!selectedIds || selectedIds.size === 0) return null;
+		return editor.api.node({
+			at: [],
+			match: (n) => selectedIds.has(n.id)
+		});
+	},
+	focus: () => {
+		const shadowInputRef = getOption("shadowInputRef");
+		if (shadowInputRef?.current) shadowInputRef.current.focus({ preventScroll: true });
+	},
+	getNodes: (options) => {
+		const selectedIds = getOption("selectedIds");
+		const nodes = editor.api.blocks({
+			at: [],
+			match: (n) => !!n.id && selectedIds?.has(n.id)
+		});
+		if (options?.sort) nodes.sort(([, pathA], [, pathB]) => PathApi.compare(pathA, pathB));
+		if (options?.collapseTableRows) {
+			const collapsedNodes = [];
+			nodes.forEach(([node, path]) => {
+				if (node.type === KEYS.tr) {
+					const tablePath = PathApi.parent(path);
+					const tableNodeEntry = editor.api.node(tablePath);
+					const existingTableIndex = collapsedNodes.findIndex(([existingNode]) => existingNode.type === tableNodeEntry[0].type && existingNode.id === tableNodeEntry[0].id);
+					if (existingTableIndex === -1) {
+						const tableNodeCopy = {
+							...tableNodeEntry[0],
+							children: [node]
+						};
+						collapsedNodes.push([tableNodeCopy, tableNodeEntry[1]]);
+					} else collapsedNodes[existingTableIndex][0].children.push(node);
+					return;
+				}
+				collapsedNodes.push([node, path]);
+			});
+			return collapsedNodes;
+		}
+		if (nodes.length === 0 && options?.selectionFallback) return editor.api.blocks({ mode: "highest" });
+		return nodes;
+	},
+	has: (id) => {
+		if (Array.isArray(id)) return id.every((i) => getOptions().selectedIds.has(i));
+		return getOptions().selectedIds.has(id);
+	},
+	isSelectable: (element, path) => !!element.id && editor.api.isBlock(element) && getOptions().isSelectable(element, path),
+	resetSelectedIds: () => {
+		setOption("selectedIds", /* @__PURE__ */ new Set());
+	},
+	set: (id) => {
+		setOption("selectedIds", new Set(Array.isArray(id) ? id : [id]));
+	},
+	unselect: () => {
+		setOption("selectedIds", /* @__PURE__ */ new Set());
+		setOption("isSelecting", false);
+	}
+})).extendApi(({ api, editor, setOption }) => ({
+	addSelectedRow: bindFirst(addSelectedRow, editor),
+	selectAll: () => {
+		const ids = api.blocks({
+			at: [],
+			mode: "highest",
+			match: (n, p) => !!n.id && api.blockSelection.isSelectable(n, p)
+		}).map((n) => n[0].id);
+		setOption("selectedIds", new Set(ids));
+		api.blockSelection.focus();
+	}
+})).extendTransforms(({ editor }) => ({
+	duplicate: bindFirst(duplicateBlockSelectionNodes, editor),
+	insertBlocksAndSelect: bindFirst(insertBlocksAndSelect, editor),
+	removeNodes: bindFirst(removeBlockSelectionNodes, editor),
+	select: bindFirst(selectBlockSelectionNodes, editor),
+	selectBlocks: bindFirst(selectBlocks, editor),
+	setIndent: bindFirst(setBlockSelectionIndent, editor),
+	setNodes: bindFirst(setBlockSelectionNodes, editor),
+	setTexts: bindFirst(setBlockSelectionTexts, editor)
+})).overrideEditor((ctx) => {
+	const { api, api: { nodes }, editor, getOption, getOptions, tf: { addMark, escape, focus, selectAll: selectAll$1, setNodes, setSelection, toggleMark } } = ctx;
+	return {
+		api: { nodes(options) {
+			if (!options?.at && getOption("isSelectingSome")) return api.blockSelection.getNodes();
+			return nodes(options);
+		} },
+		transforms: {
+			addMark(key, value) {
+				withBlockSelection(ctx, () => {
+					addMark(key, value);
+				});
+			},
+			escape: () => {
+				const apply = () => {
+					const ancestorNode = editor.api.block({ highest: true });
+					if (!ancestorNode) return;
+					const id = ancestorNode[0].id;
+					if (!id) return;
+					api.blockSelection.set(id);
+					return true;
+				};
+				if (apply()) return true;
+				return escape();
+			},
+			focus() {
+				if (!editor.meta._forceFocus && getOption("isSelectingSome")) return;
+				focus();
+			},
+			selectAll: () => {
+				if (getOptions().disableSelectAll) return selectAll$1();
+				const apply = () => {
+					const ancestorNode = editor.api.block({ highest: true });
+					if (!ancestorNode) return;
+					const [, path] = ancestorNode;
+					if (editor.api.isAt({
+						block: true,
+						end: true,
+						start: true
+					})) {
+						api.blockSelection.selectAll();
+						return true;
+					}
+					if (!editor.api.isAt({ block: true })) {
+						api.blockSelection.selectAll();
+						return true;
+					}
+					editor.tf.select(path);
+					return true;
+				};
+				if (apply()) return true;
+				return selectAll$1();
+			},
+			setNodes(props, options) {
+				withBlockSelection(ctx, () => {
+					setNodes(props, options);
+				});
+			},
+			setSelection(props) {
+				if (getOptions().selectedIds.size > 0 && !editor.getOption(BlockMenuPlugin, "openId")) api.blockSelection.deselect();
+				setSelection(props);
+			},
+			toggleMark(key, options) {
+				withBlockSelection(ctx, () => {
+					toggleMark(key, options);
+				});
+			}
+		}
+	};
+});
+const withBlockSelection = ({ api, editor, getOption }, callback) => {
+	if (getOption("isSelectingSome")) {
+		editor.tf.withoutNormalizing(() => {
+			const blocks = editor.getApi(BlockSelectionPlugin).blockSelection.getNodes();
+			editor.tf.select(editor.api.nodesRange(blocks));
+			callback();
+			api.blockSelection.set(blocks.map(([node]) => node.id));
+		});
+		return;
+	}
+	callback();
+};
+
+//#endregion
+export { BLOCK_CONTEXT_MENU_ID, BlockMenuPlugin, BlockSelectionAfterEditable, BlockSelectionPlugin, CursorOverlayPlugin, FROZEN_EMPTY_ARRAY, addOnContextMenu, copySelectedBlocks, duplicateBlockSelectionNodes, getCaretPosition, getCursorOverlayState, getSelectionRects, insertBlocksAndSelect, isSelectingOrFocused, pasteSelectedBlocks, removeBlockSelectionNodes, selectBlockSelectionNodes, selectInsertedBlocks, setBlockSelectionIndent, setBlockSelectionNodes, setBlockSelectionTexts, useBlockSelectable, useBlockSelected, useBlockSelectionFragment, useBlockSelectionFragmentProp, useBlockSelectionNodes, useCursorOverlay, useIsSelecting, useRefreshOnResize, useRequestReRender, useSelectionArea };

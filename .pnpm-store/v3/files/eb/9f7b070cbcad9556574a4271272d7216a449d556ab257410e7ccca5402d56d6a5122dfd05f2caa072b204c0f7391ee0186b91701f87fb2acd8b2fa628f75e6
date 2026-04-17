@@ -1,0 +1,4 @@
+/// <reference path="./scope-registration.d.ts" />
+export * from "./scopes/index.js";
+export * from "./clients/index.js";
+//# sourceMappingURL=index.d.ts.map

@@ -1,0 +1,9 @@
+export type NormalizedTool = {
+    name: string;
+    type?: string;
+    description?: string;
+    disabled?: boolean;
+    parameters?: unknown;
+};
+export declare const normalizeToolList: (value: unknown) => NormalizedTool[];
+//# sourceMappingURL=toolNormalization.d.ts.map

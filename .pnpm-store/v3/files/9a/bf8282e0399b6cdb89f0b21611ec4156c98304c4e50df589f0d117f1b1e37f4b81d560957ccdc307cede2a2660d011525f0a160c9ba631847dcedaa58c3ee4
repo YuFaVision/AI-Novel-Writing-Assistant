@@ -1,0 +1,2 @@
+export type { AddToolResultOptions, SubmitFeedbackOptions, ThreadSuggestion, DictationState, } from "@assistant-ui/core";
+//# sourceMappingURL=index.d.ts.map

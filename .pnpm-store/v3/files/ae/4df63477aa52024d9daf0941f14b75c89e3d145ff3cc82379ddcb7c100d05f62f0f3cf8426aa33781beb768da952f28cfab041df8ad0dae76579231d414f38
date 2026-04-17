@@ -1,0 +1,295 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { getExternalStoreMessages, INTERNAL, unstable_useCloudThreadListAdapter, unstable_useRemoteThreadListRuntime, useAui, useAuiState, useExternalMessageConverter, useExternalStoreRuntime, } from "@assistant-ui/react";
+import { convertLangChainMessages } from "./convertLangChainMessages.js";
+import { useLangGraphMessages, } from "./useLangGraphMessages.js";
+import { appendLangChainChunk } from "./appendLangChainChunk.js";
+const getPendingToolCalls = (messages) => {
+    const pendingToolCalls = new Map();
+    for (const message of messages) {
+        if (message.type === "ai") {
+            for (const toolCall of message.tool_calls ?? []) {
+                pendingToolCalls.set(toolCall.id, toolCall);
+            }
+        }
+        if (message.type === "tool") {
+            pendingToolCalls.delete(message.tool_call_id);
+        }
+    }
+    return [...pendingToolCalls.values()];
+};
+const getMessageContent = (msg) => {
+    const allContent = [
+        ...msg.content,
+        ...(msg.attachments?.flatMap((a) => a.content) ?? []),
+    ];
+    const content = allContent.map((part) => {
+        const type = part.type;
+        switch (type) {
+            case "text":
+                return { type: "text", text: part.text };
+            case "image":
+                return { type: "image_url", image_url: { url: part.image } };
+            case "file":
+                return {
+                    type: "file",
+                    data: part.data,
+                    mime_type: part.mimeType,
+                    metadata: {
+                        filename: part.filename ?? "file",
+                    },
+                    source_type: "base64",
+                };
+            case "tool-call":
+                throw new Error("Tool call appends are not supported.");
+            default:
+                const _exhaustiveCheck = type;
+                throw new Error(`Unsupported append message part type: ${_exhaustiveCheck}`);
+        }
+    });
+    if (content.length === 1 && content[0]?.type === "text") {
+        return content[0].text ?? "";
+    }
+    return content;
+};
+const symbolLangGraphRuntimeExtras = Symbol("langgraph-runtime-extras");
+const asLangGraphRuntimeExtras = (extras) => {
+    if (typeof extras !== "object" ||
+        extras == null ||
+        !(symbolLangGraphRuntimeExtras in extras))
+        throw new Error("This method can only be called when you are using useLangGraphRuntime");
+    return extras;
+};
+export const useLangGraphInterruptState = () => {
+    const interrupt = useAuiState((s) => {
+        const extras = s.thread.extras;
+        if (!extras)
+            return undefined;
+        return asLangGraphRuntimeExtras(extras).interrupt;
+    });
+    return interrupt;
+};
+export const useLangGraphSend = () => {
+    const aui = useAui();
+    return (messages, config) => {
+        const extras = aui.thread().getState().extras;
+        const { send } = asLangGraphRuntimeExtras(extras);
+        return send(messages, config);
+    };
+};
+export const useLangGraphSendCommand = () => {
+    const send = useLangGraphSend();
+    return (command) => send([], { command });
+};
+export const useLangGraphMessageMetadata = () => {
+    const messageMetadata = useAuiState((s) => {
+        const extras = s.thread.extras;
+        if (!extras)
+            return new Map();
+        return asLangGraphRuntimeExtras(extras).messageMetadata;
+    });
+    return messageMetadata;
+};
+const truncateLangChainMessages = (threadMessages, parentId) => {
+    if (parentId === null)
+        return [];
+    const parentIndex = threadMessages.findIndex((m) => m.id === parentId);
+    if (parentIndex === -1)
+        return [];
+    const truncated = [];
+    for (let i = 0; i <= parentIndex && i < threadMessages.length; i++) {
+        truncated.push(...getExternalStoreMessages(threadMessages[i]));
+    }
+    return truncated;
+};
+const useLangGraphRuntimeImpl = ({ autoCancelPendingToolCalls, adapters: { attachments, feedback, speech } = {}, unstable_allowCancellation, stream, onSwitchToThread: _onSwitchToThread, load = _onSwitchToThread, getCheckpointId, eventHandlers, }) => {
+    const aui = useAui();
+    const { interrupt, setInterrupt, messages, messageMetadata, sendMessage, cancel, setMessages, } = useLangGraphMessages({
+        appendMessage: appendLangChainChunk,
+        stream,
+        ...(eventHandlers && { eventHandlers }),
+    });
+    const [isRunning, setIsRunning] = useState(false);
+    const [toolStatuses, setToolStatuses] = useState({});
+    const toolArgsKeyOrderCacheRef = useRef(new Map());
+    const hasExecutingTools = Object.values(toolStatuses).some((s) => s?.type === "executing");
+    const effectiveIsRunning = isRunning || hasExecutingTools;
+    const converterMetadata = useMemo(() => ({
+        toolArgsKeyOrderCache: toolArgsKeyOrderCacheRef.current,
+    }), []);
+    const handleSendMessage = async (messages, config) => {
+        try {
+            setIsRunning(true);
+            await sendMessage(messages, config);
+        }
+        finally {
+            setIsRunning(false);
+        }
+    };
+    const threadMessages = useExternalMessageConverter({
+        callback: convertLangChainMessages,
+        messages,
+        isRunning: effectiveIsRunning,
+        metadata: converterMetadata,
+    });
+    const threadMessagesRef = useRef(threadMessages);
+    threadMessagesRef.current = threadMessages;
+    const [runtimeRef] = useState(() => ({
+        get current() {
+            return runtime;
+        },
+    }));
+    const toolInvocations = INTERNAL.useToolInvocations({
+        state: {
+            messages: threadMessages,
+            isRunning: effectiveIsRunning,
+        },
+        getTools: () => runtimeRef.current.thread.getModelContext().tools,
+        onResult: (command) => {
+            if (command.type === "add-tool-result") {
+                void handleSendMessage([
+                    {
+                        type: "tool",
+                        name: command.toolName,
+                        tool_call_id: command.toolCallId,
+                        content: JSON.stringify(command.result),
+                        artifact: command.artifact,
+                        status: command.isError ? "error" : "success",
+                    },
+                ], {});
+            }
+        },
+        setToolStatuses,
+    });
+    const runtime = useExternalStoreRuntime({
+        isRunning: effectiveIsRunning,
+        messages: threadMessages,
+        adapters: {
+            attachments,
+            feedback,
+            speech,
+        },
+        extras: {
+            [symbolLangGraphRuntimeExtras]: true,
+            interrupt,
+            messageMetadata,
+            send: handleSendMessage,
+        },
+        onNew: async (msg) => {
+            await toolInvocations.abort();
+            const cancellations = autoCancelPendingToolCalls !== false
+                ? getPendingToolCalls(messages).map((t) => ({
+                    type: "tool",
+                    name: t.name,
+                    tool_call_id: t.id,
+                    content: JSON.stringify({ cancelled: true }),
+                    status: "error",
+                }))
+                : [];
+            return handleSendMessage([
+                ...cancellations,
+                {
+                    type: "human",
+                    content: getMessageContent(msg),
+                },
+            ], {
+                runConfig: msg.runConfig,
+            });
+        },
+        onAddToolResult: async ({ toolCallId, toolName, result, isError, artifact, }) => {
+            // TODO parallel human in the loop calls
+            await handleSendMessage([
+                {
+                    type: "tool",
+                    name: toolName,
+                    tool_call_id: toolCallId,
+                    content: JSON.stringify(result),
+                    artifact,
+                    status: isError ? "error" : "success",
+                },
+            ], 
+            // TODO reuse runconfig here!
+            {});
+        },
+        onEdit: getCheckpointId
+            ? async (msg) => {
+                await toolInvocations.abort();
+                const truncated = truncateLangChainMessages(threadMessagesRef.current, msg.parentId);
+                setMessages(truncated);
+                setInterrupt(undefined);
+                const externalId = aui.threadListItem().getState().externalId;
+                const checkpointId = externalId
+                    ? await getCheckpointId(externalId, truncated)
+                    : null;
+                return handleSendMessage([{ type: "human", content: getMessageContent(msg) }], {
+                    runConfig: msg.runConfig,
+                    ...(checkpointId && { checkpointId }),
+                });
+            }
+            : undefined,
+        onReload: getCheckpointId
+            ? async (parentId, config) => {
+                await toolInvocations.abort();
+                const truncated = truncateLangChainMessages(threadMessagesRef.current, parentId);
+                setMessages(truncated);
+                setInterrupt(undefined);
+                const externalId = aui.threadListItem().getState().externalId;
+                const checkpointId = externalId
+                    ? await getCheckpointId(externalId, truncated)
+                    : null;
+                return handleSendMessage([], {
+                    runConfig: config.runConfig,
+                    ...(checkpointId && { checkpointId }),
+                });
+            }
+            : undefined,
+        onCancel: unstable_allowCancellation
+            ? async () => {
+                cancel();
+                await toolInvocations.abort();
+            }
+            : undefined,
+    });
+    {
+        const loadRef = useRef(load);
+        useEffect(() => {
+            loadRef.current = load;
+        });
+        useEffect(() => {
+            const load = loadRef.current;
+            if (!load)
+                return;
+            const externalId = aui.threadListItem().getState().externalId;
+            if (externalId == null)
+                return;
+            load(externalId).then(({ messages, interrupts }) => {
+                setMessages(messages);
+                setInterrupt(interrupts?.[0]);
+            });
+        }, [aui, setMessages, setInterrupt]);
+    }
+    return runtime;
+};
+export const useLangGraphRuntime = ({ cloud, create, delete: deleteFn, ...options }) => {
+    const aui = useAui();
+    const cloudAdapter = unstable_useCloudThreadListAdapter({
+        cloud,
+        create: async () => {
+            if (create) {
+                return create();
+            }
+            if (aui.threadListItem.source) {
+                return aui.threadListItem().initialize();
+            }
+            return { externalId: undefined };
+        },
+        delete: deleteFn,
+    });
+    return unstable_useRemoteThreadListRuntime({
+        runtimeHook: function RuntimeHook() {
+            return useLangGraphRuntimeImpl(options);
+        },
+        adapter: cloudAdapter,
+        allowNesting: true,
+    });
+};
+//# sourceMappingURL=useLangGraphRuntime.js.map

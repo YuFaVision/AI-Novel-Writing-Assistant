@@ -1,0 +1,2 @@
+export type { SuggestionAdapter } from "@assistant-ui/core";
+//# sourceMappingURL=index.d.ts.map

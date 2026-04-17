@@ -1,0 +1,32 @@
+import { jsx as _jsx } from "react/jsx-runtime";
+import { memo, useMemo } from "react";
+import { useAuiState } from "@assistant-ui/store";
+import { SuggestionByIndexProvider } from "../../providers/SuggestionByIndexProvider.js";
+const SuggestionComponent = ({ components }) => {
+    const Component = components.Suggestion;
+    return _jsx(Component, {});
+};
+/**
+ * Renders a single suggestion at the specified index.
+ */
+export const ThreadPrimitiveSuggestionByIndex = memo(({ index, components }) => {
+    return (_jsx(SuggestionByIndexProvider, { index: index, children: _jsx(SuggestionComponent, { components: components }) }));
+}, (prev, next) => prev.index === next.index &&
+    prev.components.Suggestion === next.components.Suggestion);
+ThreadPrimitiveSuggestionByIndex.displayName =
+    "ThreadPrimitive.SuggestionByIndex";
+/**
+ * Renders all suggestions using the provided component configuration.
+ */
+export const ThreadPrimitiveSuggestionsImpl = ({ components }) => {
+    const suggestionsLength = useAuiState((s) => s.suggestions.suggestions.length);
+    const suggestionElements = useMemo(() => {
+        if (suggestionsLength === 0)
+            return null;
+        return Array.from({ length: suggestionsLength }, (_, index) => (_jsx(ThreadPrimitiveSuggestionByIndex, { index: index, components: components }, index)));
+    }, [suggestionsLength, components]);
+    return suggestionElements;
+};
+ThreadPrimitiveSuggestionsImpl.displayName = "ThreadPrimitive.Suggestions";
+export const ThreadPrimitiveSuggestions = memo(ThreadPrimitiveSuggestionsImpl, (prev, next) => prev.components.Suggestion === next.components.Suggestion);
+//# sourceMappingURL=ThreadSuggestions.js.map

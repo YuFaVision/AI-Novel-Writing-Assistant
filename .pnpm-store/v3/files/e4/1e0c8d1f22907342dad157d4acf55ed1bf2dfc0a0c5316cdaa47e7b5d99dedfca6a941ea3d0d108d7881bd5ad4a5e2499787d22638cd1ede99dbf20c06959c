@@ -1,0 +1,35 @@
+interface FrameToHostMessage {
+    type: "subscription" | "clearEvents";
+    data: {
+        apiList?: boolean;
+        apis?: number[];
+        apiId?: number;
+    };
+}
+interface HostToFrameMessage {
+    type: "update";
+    data: {
+        apiList?: Array<{
+            apiId: number;
+        }>;
+        apis?: Array<{
+            apiId: number;
+            state: any;
+            events: any[];
+            modelContext?: any;
+        }>;
+    };
+}
+export declare class DevToolsHost {
+    private subscription;
+    private unsubscribe?;
+    private onSendMessage;
+    constructor(onSendMessage: (message: HostToFrameMessage) => void);
+    onReceiveMessage(message: FrameToHostMessage): void;
+    private handleSubscription;
+    private subscribeToDevTools;
+    private sendUpdate;
+    destroy(): void;
+}
+export {};
+//# sourceMappingURL=DevToolsHost.d.ts.map

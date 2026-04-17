@@ -1,0 +1,56 @@
+import { z } from "zod";
+const isRecord = (value) => value !== null && typeof value === "object";
+const toJsonSchema = (value) => {
+    if (value instanceof z.ZodType) {
+        try {
+            return z.toJSONSchema(value);
+        }
+        catch {
+            return value;
+        }
+    }
+    return value;
+};
+const mapToNormalizedTool = (name, raw) => {
+    const tool = { name };
+    if (typeof raw["type"] === "string") {
+        tool.type = raw["type"];
+    }
+    if (typeof raw["description"] === "string") {
+        tool.description = raw["description"];
+    }
+    if (typeof raw["disabled"] === "boolean") {
+        tool.disabled = raw["disabled"];
+    }
+    if (Object.prototype.hasOwnProperty.call(raw, "parameters")) {
+        tool.parameters = toJsonSchema(raw["parameters"]);
+    }
+    return tool;
+};
+export const normalizeToolList = (value) => {
+    if (!value || typeof value !== "object") {
+        return [];
+    }
+    if (Array.isArray(value)) {
+        const tools = [];
+        for (const entry of value) {
+            if (!isRecord(entry) || typeof entry["name"] !== "string")
+                continue;
+            tools.push(mapToNormalizedTool(entry["name"], entry));
+        }
+        return tools;
+    }
+    if (isRecord(value)) {
+        const tools = [];
+        for (const [name, entry] of Object.entries(value)) {
+            if (!isRecord(entry)) {
+                tools.push({ name });
+                continue;
+            }
+            tools.push(mapToNormalizedTool(name, entry));
+        }
+        return tools;
+    }
+    return [];
+};
+//# sourceMappingURL=toolNormalization.js.map

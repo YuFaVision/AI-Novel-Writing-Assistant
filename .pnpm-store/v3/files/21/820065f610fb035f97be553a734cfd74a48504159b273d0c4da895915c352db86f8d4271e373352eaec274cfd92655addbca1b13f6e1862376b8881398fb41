@@ -1,0 +1,5 @@
+export { AssistantFrameHost } from "./host.js";
+export { AssistantFrameProvider } from "./provider.js";
+export type { SerializedTool, SerializedModelContext, FrameMessageType, FrameMessage, } from "./types.js";
+export { FRAME_MESSAGE_CHANNEL } from "./types.js";
+//# sourceMappingURL=index.d.ts.map

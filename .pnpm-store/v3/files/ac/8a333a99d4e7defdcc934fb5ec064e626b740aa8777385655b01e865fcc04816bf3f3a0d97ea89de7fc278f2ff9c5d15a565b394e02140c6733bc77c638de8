@@ -1,0 +1,2 @@
+export type { ThreadHistoryAdapter, GenericThreadHistoryAdapter, MessageFormatAdapter, MessageFormatItem, MessageFormatRepository, MessageStorageEntry, } from "@assistant-ui/core";
+//# sourceMappingURL=index.d.ts.map

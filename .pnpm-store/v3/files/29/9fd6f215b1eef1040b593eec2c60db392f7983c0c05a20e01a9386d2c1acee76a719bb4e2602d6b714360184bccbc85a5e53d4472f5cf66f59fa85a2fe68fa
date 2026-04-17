@@ -1,0 +1,2 @@
+export { WebSpeechSynthesisAdapter, WebSpeechDictationAdapter, } from "@assistant-ui/core";
+//# sourceMappingURL=index.js.map

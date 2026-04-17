@@ -1,0 +1,585 @@
+import { c as AIMode, d as BaseAIPluginConfig, i as EditorPrompt, l as AIToolName } from "../index-BvrXoj5P.js";
+import * as platejs5 from "platejs";
+import { Descendant, EditorNodesOptions, ExtendConfig, NodeEntry, OmitFirst, Path, PluginConfig, Range, RemoveNodesOptions, SlateEditor, TElement, TIdElement, TRange, TTableElement, TText } from "platejs";
+import { DeserializeMdOptions, SerializeMdOptions } from "@platejs/markdown";
+import * as platejs_react1 from "platejs/react";
+import { OverrideEditor, PlateEditor, RenderNodeWrapperProps } from "platejs/react";
+import React from "react";
+import { ChatRequestOptions, UIMessage } from "ai";
+import { UseChatHelpers } from "@ai-sdk/react";
+import { TriggerComboboxPluginOptions } from "@platejs/combobox";
+
+//#region src/react/ai/AIPlugin.d.ts
+type AIPluginConfig = ExtendConfig<BaseAIPluginConfig>;
+declare const AIPlugin: platejs_react1.PlatePlugin<platejs5.PluginConfig<any, {}, {}, Record<any, {
+  insertNodes: (nodes: platejs5.Descendant[], args_1?: {
+    target?: platejs5.Path;
+  } | undefined) => void;
+  removeMarks: (args_0?: {
+    at?: platejs5.TLocation;
+  } | undefined) => void;
+  removeNodes: (args_0?: {
+    at?: platejs5.Path;
+  } | undefined) => void;
+  undo: () => void;
+}>, {}>>;
+//#endregion
+//#region src/react/ai-chat/internal/types.d.ts
+type ToolName = 'comment' | 'edit' | 'generate';
+type TComment = {
+  blockId: string;
+  comment: string;
+  content: string;
+};
+type MessageDataPart = {
+  toolName: ToolName;
+  comment?: TComment;
+};
+type ChatMessage = UIMessage<{}, MessageDataPart>;
+//#endregion
+//#region src/react/ai/utils/aiCommentToRange.d.ts
+declare const aiCommentToRange: (editor: SlateEditor, aiComment: TComment) => Range | undefined;
+//#endregion
+//#region src/react/ai/utils/findTextRangeInBlock.d.ts
+/** Find text within a block, supporting fuzzy matching. */
+declare function findTextRangeInBlock({
+  block,
+  findText
+}: {
+  block: NodeEntry;
+  findText: string;
+}): Range | null;
+//#endregion
+//#region src/react/ai-chat/transforms/acceptAIChat.d.ts
+declare const acceptAIChat: (editor: PlateEditor) => void;
+//#endregion
+//#region src/react/ai-chat/transforms/insertBelowAIChat.d.ts
+declare const insertBelowAIChat: (editor: PlateEditor, sourceEditor: SlateEditor, {
+  format
+}?: {
+  format?: "all" | "none" | "single";
+}) => void;
+declare const insertBelowGenerate: (editor: PlateEditor, sourceEditor: SlateEditor, {
+  format
+}?: {
+  format?: "all" | "none" | "single";
+}) => void;
+//#endregion
+//#region src/react/ai-chat/transforms/replaceSelectionAIChat.d.ts
+declare const createFormattedBlocks: ({
+  blocks,
+  format,
+  sourceBlock
+}: {
+  blocks: TElement[];
+  format: "all" | "none" | "single";
+  sourceBlock: NodeEntry;
+}) => any[] | null;
+declare const replaceSelectionAIChat: (editor: PlateEditor, sourceEditor: SlateEditor, {
+  format
+}?: {
+  format?: "all" | "none" | "single";
+}) => void;
+//#endregion
+//#region src/react/ai-chat/utils/resetAIChat.d.ts
+declare const resetAIChat: (editor: PlateEditor, {
+  undo
+}?: {
+  undo?: boolean;
+}) => void;
+//#endregion
+//#region src/react/ai-chat/utils/submitAIChat.d.ts
+declare const submitAIChat: (editor: PlateEditor, input: string, {
+  mode,
+  options,
+  prompt,
+  toolName: toolNameProps
+}?: {
+  mode?: AIMode;
+  options?: ChatRequestOptions;
+  prompt?: EditorPrompt;
+  toolName?: AIToolName;
+}) => void;
+//#endregion
+//#region src/react/ai-chat/AIChatPlugin.d.ts
+type AIChatPluginConfig = PluginConfig<'aiChat', {
+  _blockChunks: string;
+  _blockPath: Path | null;
+  /** @private Using For streamInsertChunk */
+  _mdxName: string | null;
+  _replaceIds: string[];
+  /** @private The Editor used to generate the AI response. */
+  aiEditor: SlateEditor | null;
+  chat: UseChatHelpers<ChatMessage>;
+  chatNodes: TIdElement[];
+  chatSelection: TRange | null;
+  /** @deprecated Use api.aiChat.node({streaming:true}) instead */
+  experimental_lastTextId: string | null;
+  /**
+   * Specifies how the assistant message is handled:
+   *
+   * - 'insert': Directly inserts content into the editor without preview.
+   * - 'chat': Initiates an interactive session to review and refine content
+   *   before insertion.
+   */
+  mode: AIMode;
+  open: boolean;
+  /** Whether the AI response is currently streaming. Cursor mode only. */
+  streaming: boolean;
+  toolName: AIToolName;
+} & TriggerComboboxPluginOptions, {
+  aiChat: {
+    reset: OmitFirst<typeof resetAIChat>;
+    submit: OmitFirst<typeof submitAIChat>;
+    hide: (options?: {
+      focus?: boolean;
+      undo?: boolean;
+    }) => void;
+    node: (options?: EditorNodesOptions & {
+      anchor?: boolean;
+      streaming?: boolean;
+    }) => NodeEntry | undefined;
+    reload: () => void;
+    show: () => void;
+    stop: () => void;
+  };
+}, {
+  aiChat: {
+    accept: OmitFirst<typeof acceptAIChat>;
+    insertBelow: OmitFirst<typeof insertBelowAIChat>;
+    replaceSelection: OmitFirst<typeof replaceSelectionAIChat>;
+    removeAnchor: (options?: EditorNodesOptions) => void;
+  };
+}>;
+declare const AIChatPlugin: platejs_react1.PlatePlugin<PluginConfig<"aiChat", {
+  _blockChunks: string;
+  _blockPath: Path | null;
+  /** @private Using For streamInsertChunk */
+  _mdxName: string | null;
+  _replaceIds: string[];
+  /** @private The Editor used to generate the AI response. */
+  aiEditor: SlateEditor | null;
+  chat: UseChatHelpers<ChatMessage>;
+  chatNodes: TIdElement[];
+  chatSelection: TRange | null;
+  /** @deprecated Use api.aiChat.node({streaming:true}) instead */
+  experimental_lastTextId: string | null;
+  /**
+   * Specifies how the assistant message is handled:
+   *
+   * - 'insert': Directly inserts content into the editor without preview.
+   * - 'chat': Initiates an interactive session to review and refine content
+   *   before insertion.
+   */
+  mode: AIMode;
+  open: boolean;
+  /** Whether the AI response is currently streaming. Cursor mode only. */
+  streaming: boolean;
+  toolName: AIToolName;
+} & TriggerComboboxPluginOptions, {
+  aiChat: {
+    reset: OmitFirst<typeof resetAIChat>;
+    submit: OmitFirst<typeof submitAIChat>;
+    hide: (options?: {
+      focus?: boolean;
+      undo?: boolean;
+    }) => void;
+    node: (options?: EditorNodesOptions & {
+      anchor?: boolean;
+      streaming?: boolean;
+    }) => NodeEntry | undefined;
+    reload: () => void;
+    show: () => void;
+    stop: () => void;
+  };
+} & Record<"aiChat", Pick<{
+  reset: OmitFirst<typeof resetAIChat>;
+  submit: OmitFirst<typeof submitAIChat>;
+  hide: (options?: {
+    focus?: boolean;
+    undo?: boolean;
+  }) => void;
+  node: (options?: EditorNodesOptions & {
+    anchor?: boolean;
+    streaming?: boolean;
+  }) => NodeEntry | undefined;
+  reload: () => void;
+  show: () => void;
+  stop: () => void;
+}, "node" | "stop" | "reset" | "submit">> & Record<"aiChat", {
+  hide: ({
+    focus,
+    undo
+  }?: {
+    focus?: boolean;
+    undo?: boolean;
+  }) => void;
+  show: () => void;
+}>, {
+  aiChat: {
+    accept: OmitFirst<typeof acceptAIChat>;
+    insertBelow: OmitFirst<typeof insertBelowAIChat>;
+    replaceSelection: OmitFirst<typeof replaceSelectionAIChat>;
+    removeAnchor: (options?: EditorNodesOptions) => void;
+  };
+} & Record<"aiChat", {
+  accept: () => void;
+  insertBelow: (sourceEditor: SlateEditor, args_1?: {
+    format?: "all" | "none" | "single";
+  } | undefined) => void;
+  removeAnchor: (options?: platejs5.RemoveNodesOptions | undefined) => void;
+  replaceSelection: (sourceEditor: SlateEditor, args_1?: {
+    format?: "all" | "none" | "single";
+  } | undefined) => void;
+}>, {}>>;
+//#endregion
+//#region src/react/ai-chat/withAIChat.d.ts
+declare const withAIChat: OverrideEditor<AIChatPluginConfig>;
+//#endregion
+//#region src/react/ai-chat/hooks/useAIChatEditor.d.ts
+/**
+ * Register an editor in the AI chat plugin, and deserializes the content into
+ * `editor.children` with block-level memoization.
+ *
+ * @returns Deserialized children to pass as `value` prop to PlateStatic
+ */
+declare const useAIChatEditor: (editor: SlateEditor, content: string, {
+  parser
+}?: DeserializeMdOptions) => platejs5.Value;
+//#endregion
+//#region src/react/ai-chat/hooks/useChatChunk.d.ts
+declare const useChatChunk: ({
+  onChunk,
+  onFinish
+}: {
+  onChunk: (chunk: {
+    chunk: string;
+    isFirst: boolean;
+    nodes: TText[];
+    text: string;
+  }) => void;
+  onFinish?: ({
+    content
+  }: {
+    content: string;
+  }) => void;
+}) => void;
+//#endregion
+//#region src/react/ai-chat/hooks/useEditorChat.d.ts
+type UseEditorChatOptions = {
+  chat?: any;
+  onOpenBlockSelection?: (blocks: NodeEntry[]) => void;
+  onOpenChange?: (open: boolean) => void;
+  onOpenCursor?: () => void;
+  onOpenSelection?: () => void;
+};
+declare const useEditorChat: ({
+  onOpenBlockSelection,
+  onOpenChange,
+  onOpenCursor,
+  onOpenSelection
+}: UseEditorChatOptions) => void;
+//#endregion
+//#region src/react/ai-chat/streaming/streamDeserializeInlineMd.d.ts
+declare const streamDeserializeInlineMd: (editor: PlateEditor, text: string, options?: DeserializeMdOptions) => platejs5.Descendant[];
+//#endregion
+//#region src/react/ai-chat/streaming/streamDeserializeMd.d.ts
+declare const streamDeserializeMd: (editor: PlateEditor, data: string, options?: DeserializeMdOptions) => TElement[] | {
+  children: {
+    text: string;
+  }[];
+  type: string;
+}[];
+//#endregion
+//#region src/react/ai-chat/streaming/streamInsertChunk.d.ts
+type SteamInsertChunkOptions = {
+  elementProps?: any;
+  textProps?: any;
+};
+/** @experimental */
+declare function streamInsertChunk(editor: PlateEditor, chunk: string, options?: SteamInsertChunkOptions): void;
+declare const getCurrentBlockPath: (editor: SlateEditor) => Path;
+//#endregion
+//#region src/react/ai-chat/streaming/streamSerializeMd.d.ts
+declare const streamSerializeMd: (editor: PlateEditor, options: SerializeMdOptions, chunk: string) => string;
+//#endregion
+//#region src/react/ai-chat/streaming/utils/escapeInput.d.ts
+declare const escapeInput: (data: string) => string;
+//#endregion
+//#region src/react/ai-chat/streaming/utils/getListNode.d.ts
+declare const getListNode: (editor: PlateEditor, node: TElement) => TElement;
+//#endregion
+//#region src/react/ai-chat/streaming/utils/isSameNode.d.ts
+declare const isSameNode: (editor: PlateEditor, node1: TElement | TText, node2: TElement | TText) => boolean;
+//#endregion
+//#region src/react/ai-chat/streaming/utils/nodesWithProps.d.ts
+declare const nodesWithProps: (editor: PlateEditor, nodes: Descendant[], options: SteamInsertChunkOptions) => Descendant[];
+//#endregion
+//#region src/react/ai-chat/streaming/utils/utils.d.ts
+declare const getChunkTrimmed: (chunk: string, {
+  direction
+}?: {
+  direction?: "left" | "right";
+}) => string;
+declare function isCompleteCodeBlock(str: string): boolean;
+declare function isCompleteMath(str: string): boolean;
+//#endregion
+//#region src/react/ai-chat/transforms/removeAnchorAIChat.d.ts
+declare const removeAnchorAIChat: (editor: PlateEditor, options?: RemoveNodesOptions) => void;
+//#endregion
+//#region src/react/ai-chat/utils/acceptAISuggestions.d.ts
+declare const acceptAISuggestions: (editor: PlateEditor) => void;
+//#endregion
+//#region src/react/ai-chat/utils/applyAISuggestions.d.ts
+declare const applyAISuggestions: (editor: SlateEditor, content: string) => void;
+declare const withTransient: (diffNodes: Descendant[]) => Descendant[];
+declare const withoutSuggestionAndComments: (nodes: Descendant[]) => Descendant[];
+//#endregion
+//#region src/react/ai-chat/utils/applyTableCellSuggestion.d.ts
+type TableCellUpdate = {
+  content: string;
+  id: string;
+};
+/**
+ * Apply AI-generated content to a table cell as diff suggestions. Finds the
+ * cell by ID, deserializes the markdown content, computes diff, and replaces
+ * the cell's children with suggestion-marked nodes.
+ */
+declare const applyTableCellSuggestion: (editor: SlateEditor, cellUpdate: TableCellUpdate) => void;
+//#endregion
+//#region src/react/ai-chat/utils/getLastAssistantMessage.d.ts
+declare function getLastAssistantMessage(editor: PlateEditor): ChatMessage | undefined;
+declare function useLastAssistantMessage(): ChatMessage | undefined;
+//#endregion
+//#region src/react/ai-chat/utils/nestedContainerUtils.d.ts
+/** Check if nodes is a single table with single cell */
+declare const isSingleCellTable: (nodes: Descendant[]) => nodes is [TTableElement];
+/** Extract td children from single-cell table */
+declare const getTableCellChildren: (table: TTableElement) => Descendant[];
+//#endregion
+//#region src/react/ai-chat/utils/rejectAISuggestions.d.ts
+declare const rejectAISuggestions: (editor: PlateEditor) => void;
+//#endregion
+//#region src/react/copilot/utils/callCompletionApi.d.ts
+declare const getOriginalFetch: () => typeof fetch;
+type CallCompletionApiOptions = {
+  prompt: string;
+  api?: string;
+  body?: Record<string, any>;
+  credentials?: RequestCredentials | undefined;
+  fetch?: ReturnType<typeof getOriginalFetch> | undefined;
+  headers?: HeadersInit | undefined;
+  setAbortController?: (abortController: AbortController | null) => void;
+  setCompletion?: (completion: string) => void;
+  setError?: (error: Error | null) => void;
+  setLoading?: (loading: boolean) => void;
+  onError?: ((error: Error) => void) | undefined;
+  onFinish?: ((prompt: string, completion: string) => void) | undefined;
+  onResponse?: ((response: Response) => Promise<void> | void) | undefined;
+};
+type CompleteOptions = Omit<CallCompletionApiOptions, 'setAbortController' | 'setCompletion' | 'setError' | 'setLoading'>;
+declare function callCompletionApi({
+  api,
+  body,
+  credentials,
+  fetch,
+  headers,
+  prompt,
+  setAbortController,
+  setCompletion,
+  setError,
+  setLoading,
+  onError,
+  onFinish,
+  onResponse
+}: CallCompletionApiOptions): Promise<string | null | undefined>;
+//#endregion
+//#region src/react/copilot/transforms/acceptCopilot.d.ts
+declare const acceptCopilot: (editor: PlateEditor) => false | undefined;
+//#endregion
+//#region src/react/copilot/transforms/acceptCopilotNextWord.d.ts
+declare const acceptCopilotNextWord: (editor: PlateEditor) => false | undefined;
+//#endregion
+//#region src/react/copilot/utils/getNextWord.d.ts
+type GetNextWord = (options: {
+  text: string;
+}) => {
+  firstWord: string;
+  remainingText: string;
+};
+declare const getNextWord: GetNextWord;
+//#endregion
+//#region src/react/copilot/utils/triggerCopilotSuggestion.d.ts
+declare const triggerCopilotSuggestion: (editor: PlateEditor) => Promise<false | undefined>;
+//#endregion
+//#region src/react/copilot/CopilotPlugin.d.ts
+type CopilotPluginConfig = PluginConfig<'copilot', CompletionState & {
+  /**
+   * AI completion options. See:
+   * {@link https://sdk.vercel.ai/docs/reference/ai-sdk-ui/use-completion#parameters | AI SDK UI useCompletion Parameters}
+   */
+  completeOptions?: Partial<CompleteOptions>;
+  /**
+   * Debounce delay for auto triggering AI completion.
+   *
+   * @default 0
+   */
+  debounceDelay?: number;
+  /** Get the next word to be inserted. */
+  getNextWord?: GetNextWord;
+  /** Render the ghost text. */
+  renderGhostText?: (() => React.ReactNode) | null;
+  shouldAbort?: boolean;
+  /** The node id where the suggestion is located. */
+  suggestionNodeId?: string | null;
+  /** The text of the suggestion. */
+  suggestionText?: string | null;
+  /**
+   * Conditions to auto trigger copilot, used in addition to triggerQuery.
+   * Disabling defaults to:
+   *
+   * - Block above is empty
+   * - Block above ends with a space
+   * - There is already a suggestion
+   */
+  autoTriggerQuery?: (options: {
+    editor: PlateEditor;
+  }) => boolean;
+  /**
+   * Get the prompt for AI completion.
+   *
+   * @default serializeMdNodes(editor.api.block({ highest: true }))
+   */
+  getPrompt?: (options: {
+    editor: PlateEditor;
+  }) => string;
+  /**
+   * Conditions to trigger copilot. Disabling defaults to:
+   *
+   * - Selection is expanded
+   * - Selection is not at the end of block
+   */
+  triggerQuery?: (options: {
+    editor: PlateEditor;
+  }) => boolean;
+}, {
+  copilot: {
+    triggerSuggestion: OmitFirst<typeof triggerCopilotSuggestion>;
+    reject: () => false | undefined;
+    setBlockSuggestion: (options: {
+      text: string;
+      id?: string;
+    }) => void;
+    stop: () => void;
+  };
+}, {
+  copilot: {
+    accept: OmitFirst<typeof acceptCopilot>;
+    acceptNextWord: OmitFirst<typeof acceptCopilotNextWord>;
+  };
+}, {
+  isSuggested?: (id: string) => boolean;
+}>;
+type CompletionState = {
+  abortController?: AbortController | null;
+  completion?: string | null;
+  error?: Error | null;
+  isLoading?: boolean;
+};
+declare const CopilotPlugin: platejs_react1.PlatePlugin<PluginConfig<"copilot", CompletionState & {
+  /**
+   * AI completion options. See:
+   * {@link https://sdk.vercel.ai/docs/reference/ai-sdk-ui/use-completion#parameters | AI SDK UI useCompletion Parameters}
+   */
+  completeOptions?: Partial<CompleteOptions>;
+  /**
+   * Debounce delay for auto triggering AI completion.
+   *
+   * @default 0
+   */
+  debounceDelay?: number;
+  /** Get the next word to be inserted. */
+  getNextWord?: GetNextWord;
+  /** Render the ghost text. */
+  renderGhostText?: (() => React.ReactNode) | null;
+  shouldAbort?: boolean;
+  /** The node id where the suggestion is located. */
+  suggestionNodeId?: string | null;
+  /** The text of the suggestion. */
+  suggestionText?: string | null;
+  /**
+   * Conditions to auto trigger copilot, used in addition to triggerQuery.
+   * Disabling defaults to:
+   *
+   * - Block above is empty
+   * - Block above ends with a space
+   * - There is already a suggestion
+   */
+  autoTriggerQuery?: (options: {
+    editor: PlateEditor;
+  }) => boolean;
+  /**
+   * Get the prompt for AI completion.
+   *
+   * @default serializeMdNodes(editor.api.block({ highest: true }))
+   */
+  getPrompt?: (options: {
+    editor: PlateEditor;
+  }) => string;
+  /**
+   * Conditions to trigger copilot. Disabling defaults to:
+   *
+   * - Selection is expanded
+   * - Selection is not at the end of block
+   */
+  triggerQuery?: (options: {
+    editor: PlateEditor;
+  }) => boolean;
+}, {
+  copilot: {
+    triggerSuggestion: OmitFirst<typeof triggerCopilotSuggestion>;
+    reject: () => false | undefined;
+    setBlockSuggestion: (options: {
+      text: string;
+      id?: string;
+    }) => void;
+    stop: () => void;
+  };
+} & Record<"copilot", Omit<{
+  triggerSuggestion: OmitFirst<typeof triggerCopilotSuggestion>;
+  reject: () => false | undefined;
+  setBlockSuggestion: (options: {
+    text: string;
+    id?: string;
+  }) => void;
+  stop: () => void;
+}, "reject">> & Record<"copilot", {
+  reject: () => false | undefined;
+}>, {
+  copilot: {
+    accept: OmitFirst<typeof acceptCopilot>;
+    acceptNextWord: OmitFirst<typeof acceptCopilotNextWord>;
+  };
+} & Record<"copilot", {
+  accept: () => false | undefined;
+  acceptNextWord: () => false | undefined;
+}>, {
+  isSuggested?: (id: string) => boolean;
+}>>;
+//#endregion
+//#region src/react/copilot/renderCopilotBelowNodes.d.ts
+declare const renderCopilotBelowNodes: ({
+  editor
+}: RenderNodeWrapperProps<CopilotPluginConfig>) => (({
+  children
+}: {
+  children: React.ReactNode;
+}) => React.JSX.Element) | undefined;
+//#endregion
+//#region src/react/copilot/withCopilot.d.ts
+declare const withCopilot: OverrideEditor<CopilotPluginConfig>;
+//#endregion
+//#region src/react/copilot/utils/withoutAbort.d.ts
+declare const withoutAbort: (editor: PlateEditor, fn: () => void) => void;
+//#endregion
+export { AIChatPlugin, AIChatPluginConfig, AIPlugin, AIPluginConfig, CallCompletionApiOptions, CompleteOptions, CopilotPlugin, CopilotPluginConfig, GetNextWord, SteamInsertChunkOptions, TableCellUpdate, UseEditorChatOptions, acceptAIChat, acceptAISuggestions, acceptCopilot, acceptCopilotNextWord, aiCommentToRange, applyAISuggestions, applyTableCellSuggestion, callCompletionApi, createFormattedBlocks, escapeInput, findTextRangeInBlock, getChunkTrimmed, getCurrentBlockPath, getLastAssistantMessage, getListNode, getNextWord, getTableCellChildren, insertBelowAIChat, insertBelowGenerate, isCompleteCodeBlock, isCompleteMath, isSameNode, isSingleCellTable, nodesWithProps, rejectAISuggestions, removeAnchorAIChat, renderCopilotBelowNodes, replaceSelectionAIChat, resetAIChat, streamDeserializeInlineMd, streamDeserializeMd, streamInsertChunk, streamSerializeMd, submitAIChat, triggerCopilotSuggestion, useAIChatEditor, useChatChunk, useEditorChat, useLastAssistantMessage, withAIChat, withCopilot, withTransient, withoutAbort, withoutSuggestionAndComments };

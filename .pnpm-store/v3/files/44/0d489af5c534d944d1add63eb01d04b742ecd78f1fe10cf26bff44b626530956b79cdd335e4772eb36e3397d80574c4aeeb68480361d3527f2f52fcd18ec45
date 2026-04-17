@@ -1,0 +1,2 @@
+export { ModelContextRegistry } from "@assistant-ui/core";
+//# sourceMappingURL=index.js.map
