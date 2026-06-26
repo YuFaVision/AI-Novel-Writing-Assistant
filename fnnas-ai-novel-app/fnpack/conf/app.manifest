@@ -1,0 +1,23 @@
+{
+  "permissions": [
+    {
+      "name": "network",
+      "description": "Allow network access for API calls",
+      "required": true
+    },
+    {
+      "name": "storage",
+      "description": "Allow storage access for novel files",
+      "required": true
+    }
+  ],
+  "dependencies": [],
+  "resources": {
+    "cpu": "1",
+    "memory": "512m",
+    "disk": "1g"
+  },
+  "environment": {
+    "NODE_ENV": "production"
+  }
+}

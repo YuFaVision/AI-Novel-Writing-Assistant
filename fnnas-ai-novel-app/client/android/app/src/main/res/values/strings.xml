@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">AI Novel Writing Assistant</string>
+    <string name="title_activity_main">AI Novel Writing Assistant</string>
+    <string name="package_name">com.example.ainovel</string>
+    <string name="custom_url_scheme">com.example.ainovel</string>
+</resources>

@@ -1,0 +1,33 @@
+{
+  "app_name": "AI Novel Writing Assistant",
+  "version": "1.0.0",
+  "description": "An AI-powered novel writing assistant",
+  "author": "Feiniu NAS Developer",
+  "maintainer": "Feiniu NAS Developer",
+  "website": "https://developer.fnnas.com",
+  "category": "productivity",
+  "tags": ["ai", "writing", "novel"],
+  "services": [
+    {
+      "name": "ai-novel-server",
+      "description": "AI Novel Writing Assistant Server",
+      "start": "node index.js",
+      "stop": "kill $(cat server.pid)",
+      "restart": "kill $(cat server.pid) && node index.js",
+      "log": "logs/server.log",
+      "pid": "server.pid",
+      "env": {
+        "NODE_ENV": "production"
+      },
+      "port": 5001,
+      "protocol": "http"
+    }
+  ],
+  "frontend": {
+    "type": "web",
+    "path": "web",
+    "index": "index.html",
+    "port": 5173,
+    "protocol": "http"
+  }
+}
